@@ -1,0 +1,68 @@
+name: Deploy web app to GitHub Pages
+
+# Publishes the peer-to-peer web app (app/www) as a static site, so anyone can
+# host/join from a PC or phone browser — no install, no server. Interoperates
+# with the Android APK (same code, same PeerJS namespace).
+#
+# NOTE: GitHub Pages on a PRIVATE repo needs a paid plan. On the free plan the
+# repo must be public. Also set Settings -> Pages -> Source = "GitHub Actions"
+# (the configure-pages step below tries to enable it automatically).
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'app/www/**'
+      - 'engine.js'
+      - 'game-room.js'
+      - 'app/scripts/sync-assets.js'
+      - 'app/package.json'
+      - 'app/package-lock.json'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Sync web assets (engine/game-room/peerjs -> www/lib)
+        working-directory: app
+        run: npm run sync-assets
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/www
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
