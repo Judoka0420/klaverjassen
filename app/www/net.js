@@ -71,7 +71,8 @@ function createSolo(opts) {
   });
   room.addHuman(me, opts.name || 'You');
   net.emit = (event, data) => {
-    if (event === 'hello' || event === 'leave') return;
+    if (event === 'hello') return;
+    if (event === 'leave') { net.close(); net._fire('ready'); return; }
     room.handle(me, event, data || {});
   };
   net.close = () => { room.clearTimers(); };
