@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# Capacitor / Android build outputs
+android/app/build/
+android/build/
+android/.gradle/
+android/captures/
+android/local.properties
+android/app/src/main/assets/public/
+android/app/release/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# generated web assets (copied from repo root by scripts/sync-assets.js)
+www/lib/
+
+# misc
+.DS_Store
+*.log

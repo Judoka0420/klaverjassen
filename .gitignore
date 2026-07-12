@@ -1,0 +1,17 @@
+# dependencies (regenerated with npm install / npm ci)
+node_modules/
+
+# large bundled binary — download separately, not source
+cloudflared.exe
+
+# runtime / local
+.kj-pids.txt
+*.log
+
+# build artifacts
+*.apk
+*.aab
+
+# os
+.DS_Store
+Thumbs.db

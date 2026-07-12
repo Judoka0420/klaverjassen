@@ -1,0 +1,16 @@
+# Normalize text to LF in the repo (keeps gradlew runnable on the Linux CI runner).
+* text=auto eol=lf
+
+# Windows batch stays CRLF
+*.bat text eol=crlf
+
+# Binary assets — never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.webp binary
+*.jar binary
+*.keystore binary
+*.jks binary
+*.exe binary

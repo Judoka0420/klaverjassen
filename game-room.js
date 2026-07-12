@@ -1,0 +1,342 @@
+/* ============================================================
+   Klaverjassen game room — authoritative game flow, transport-agnostic.
+   Ported from server.js's Room class so the SAME logic runs on:
+     - the Node server (server.js, via Socket.IO), and
+     - a player's phone acting as host (mobile app, via WebRTC data channels)
+     - a phone playing solo offline (bots fill the other seats).
+
+   The room never touches sockets/peers directly. All outbound messages go
+   through an injected send(playerId, event, payload) callback; membership
+   (seats + spectators) is owned here.
+
+   Runs in Node and in the browser.
+   ============================================================ */
+;(function (root) {
+'use strict';
+
+const E = (typeof module !== 'undefined' && module.exports) ? require('./engine') : root.KJEngine;
+
+const SEAT_LABEL = ['South', 'West', 'North', 'East'];
+const TEAM = ['North/South', 'East/West'];
+const SYM = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
+const sym = s => SYM[s];
+
+const DEFAULT_TIMINGS = { botThink: 850, trumpThink: 1000, trickLinger: 2400, dealAuto: 10000 };
+const DEFAULT_MATCH_DEALS = 16;
+
+class GameRoom {
+  constructor(code, opts = {}) {
+    this.code = code;
+    this.send = opts.send || function () {};      // send(playerId, event, payload)
+    this.timings = Object.assign({}, DEFAULT_TIMINGS, opts.timings);
+    this.matchDeals = opts.matchDeals || DEFAULT_MATCH_DEALS;
+
+    this.seats = [null, null, null, null];        // {playerId,name,isBot,connected}
+    this.hostId = null;
+    this.phase = 'lobby';                          // lobby|choosing|playing|scored|matchover
+    this.log = [];
+    this.timers = new Set();
+    this.advanced = false;
+    this.botLevel = opts.botLevel || 'normal';     // easy | normal | hard
+    this.spectators = new Map();                   // playerId -> { name }
+    this.g = null;                                 // game state
+  }
+
+  /* --- membership --- */
+  openSeat() { return this.seats.findIndex(s => s === null); }
+  seatOf(playerId) { return this.seats.findIndex(s => s && s.playerId === playerId); }
+  humans() { return this.seats.filter(s => s && !s.isBot); }
+  addHuman(playerId, name) {
+    const seat = this.openSeat();
+    if (seat < 0) return -1;
+    this.seats[seat] = { playerId, name, isBot: false, connected: true };
+    if (!this.hostId) this.hostId = playerId;
+    return seat;
+  }
+  claimSeat(playerId, target) {
+    if (target == null || target < 0 || target > 3) return false;
+    if (this.seats[target] && !(this.seats[target].isBot)) return false; // occupied by human
+    const cur = this.seatOf(playerId);
+    if (cur < 0 || this.phase !== 'lobby') return false;
+    const me = this.seats[cur];
+    this.seats[cur] = null;
+    this.seats[target] = me;
+    return true;
+  }
+  setConnected(playerId, on) {
+    const seat = this.seatOf(playerId);
+    if (seat >= 0) this.seats[seat].connected = on;
+  }
+  addSpectator(playerId, name) { this.spectators.set(playerId, { name: name || 'Spectator' }); }
+  removeSpectator(playerId) { this.spectators.delete(playerId); }
+  removePlayer(playerId) {
+    this.spectators.delete(playerId);
+    const seat = this.seatOf(playerId);
+    if (seat < 0) return;
+    if (this.phase === 'lobby') {
+      this.seats[seat] = null;
+      if (this.hostId === playerId) {
+        const nh = this.seats.find(s => s && !s.isBot);
+        this.hostId = nh ? nh.playerId : null;
+      }
+    } else {
+      // mid-game: keep the seat, hand control to a bot until they return
+      this.seats[seat].connected = false;
+    }
+  }
+
+  /* --- timers helper (so we can cancel on room death) --- */
+  after(ms, fn) { const t = setTimeout(() => { this.timers.delete(t); fn(); }, ms); this.timers.add(t); return t; }
+  clearTimers() { for (const t of this.timers) clearTimeout(t); this.timers.clear(); }
+
+  addLog(cls, html) { this.log.push({ cls, html }); if (this.log.length > 120) this.log.shift(); }
+
+  /* ============================================================
+                        GAME FLOW
+     ============================================================ */
+  startGame() {
+    // fill empty seats with bots
+    for (let s = 0; s < 4; s++) if (!this.seats[s]) this.seats[s] = { playerId: 'bot' + s, name: 'Bot ' + SEAT_LABEL[s], isBot: true, connected: true };
+    // Random starting dealer each match, so the host (seat 0) isn't always first to choose trump.
+    this.g = { deal: 0, cumulative: [0, 0], firstDealer: Math.floor(Math.random() * 4) };
+    this.log = [];
+    this.addLog('deal', `Match start — ${this.matchDeals} deals, Rotterdam rules. North &amp; South vs East &amp; West. Bots: <b>${this.botLevel}</b>.`);
+    this.newDeal();
+  }
+
+  newDeal() {
+    const g = this.g;
+    g.deal++;
+    this.advanced = false;
+    const dealer = (g.firstDealer + (g.deal - 1)) % 4;
+    const chooser = (dealer + 1) % 4;
+    const deck = E.freshDeck();
+    const hands = [[], [], [], []];
+    for (let i = 0; i < 32; i++) hands[i % 4].push(deck[i]);
+    hands.forEach(h => h.sort(E.handComparator(null)));
+    Object.assign(g, {
+      dealer, chooser, hands, trump: null,
+      trick: [], leader: chooser, turn: chooser, trickNo: 0, resolving: false,
+      dealCard: [0, 0], dealRoem: [0, 0], tricksWon: [0, 0], played: [],
+      lastResult: null,
+    });
+    this.phase = 'choosing';
+    this.addLog('deal', `— Deal ${g.deal} — ${this.name(dealer)} deals. ${this.name(chooser)} chooses trump.`);
+    this.broadcast();
+    if (this.isAuto(chooser)) this.scheduleBotTrump(chooser);
+  }
+
+  isAuto(seat) { const s = this.seats[seat]; return !s || s.isBot || !s.connected; }
+  name(seat) { const s = this.seats[seat]; return s ? s.name : SEAT_LABEL[seat]; }
+
+  // deferred bot trump choice — re-checks state when the timer fires (handles reconnection & stale timers)
+  scheduleBotTrump(seat) {
+    this.after(this.timings.trumpThink, () => {
+      if (this.phase === 'choosing' && this.g.chooser === seat && this.isAuto(seat))
+        this.setTrump(E.botChooseTrump(this.g.hands[seat], this.botLevel));
+    });
+  }
+
+  setTrump(suit) {
+    if (this.phase !== 'choosing' || !E.SUITS.includes(suit)) return;
+    const g = this.g;
+    g.trump = suit;
+    g.hands.forEach(h => h.sort(E.handComparator(suit)));
+    this.phase = 'playing';
+    this.addLog('deal', `Trump is ${sym(suit)} — chosen by ${this.name(g.chooser)}.`);
+    this.broadcast();
+    this.nextTurn();
+  }
+
+  nextTurn() {
+    if (this.phase !== 'playing') return;
+    this.broadcast();
+    const seat = this.g.turn;
+    if (this.isAuto(seat)) this.after(this.timings.botThink, () => {
+      // re-validate: state may have moved on, or a human may have reconnected to this seat
+      if (this.phase !== 'playing' || this.g.turn !== seat || !this.isAuto(seat)) return;
+      if (!this.g.hands[seat].length) return;
+      const card = E.chooseBotCard(seat, this.g.hands[seat], this.g.trick, this.g.trump, { level: this.botLevel, played: this.g.played, chooser: this.g.chooser });
+      if (card) this.doPlay(seat, card);
+    });
+  }
+
+  // returns error string or null
+  play(playerId, cid) {
+    const seat = this.seatOf(playerId);
+    if (seat < 0) return 'not seated';
+    if (this.phase !== 'playing') return 'not in play';
+    if (this.g.turn !== seat) return 'not your turn';
+    const card = this.g.hands[seat].find(c => E.cardId(c) === cid);
+    if (!card) return 'card not in hand';
+    const legal = E.legalMoves(this.g.hands[seat], this.g.trick, this.g.trump);
+    if (!legal.some(c => E.cardId(c) === cid)) return 'illegal move';
+    this.doPlay(seat, card);
+    return null;
+  }
+
+  doPlay(seat, card) {
+    if (!card || this.phase !== 'playing' || this.g.turn !== seat) return;
+    const g = this.g, h = g.hands[seat];
+    const i = h.findIndex(c => c.suit === card.suit && c.rank === card.rank);
+    if (i < 0) return;
+    h.splice(i, 1);
+    g.trick.push({ seat, card });
+    g.played.push(card);                  // deal history for card-counting (hard bots)
+    if (g.trick.length < 4) {
+      g.turn = (seat + 1) % 4;
+      this.nextTurn();
+    } else {
+      g.resolving = true;                 // trick full: nobody is "on turn" until it's cleared
+      this.broadcast();                   // show the completed 4-card trick during the linger
+      this.after(this.timings.trickLinger, () => this.resolveTrick());
+    }
+  }
+
+  resolveTrick() {
+    const g = this.g, tr = g.trump, trick = g.trick, cards = trick.map(t => t.card);
+    const winner = E.trickWinnerSeat(trick, tr), tm = E.teamOf(winner);
+    const pts = cards.reduce((s, c) => s + E.cardVal(c, tr), 0);
+    const { roem, labels } = E.computeRoem(cards, tr);
+    g.dealCard[tm] += pts; g.dealRoem[tm] += roem; g.tricksWon[tm]++;
+    g.trickNo++;
+    let msg = `Trick ${g.trickNo}: ${this.name(winner)} wins (${pts} pts).`;
+    if (roem) msg += ` Roem +${roem}: ${labels.join(', ')}.`;
+    this.addLog(roem ? 'roem' : '', msg);
+    if (g.trickNo === 8) {
+      g.dealCard[tm] += 10;
+      this.addLog('', `Last trick +10 to ${TEAM[tm]}.`);
+      // leave g.resolving true so no seat is on turn during the pause; trick stays visible
+      this.broadcast();
+      this.after(600, () => this.scoreDeal());
+    } else {
+      g.trick = [];
+      g.resolving = false;
+      g.leader = winner; g.turn = winner;
+      this.nextTurn();                    // fresh broadcast: empty trick, winner leads, correct legal
+    }
+  }
+
+  scoreDeal() {
+    const g = this.g;
+    const play = E.teamOf(g.chooser), opp = 1 - play;
+    const pitPlay = g.tricksWon[play] === 8, pitOpp = g.tricksWon[opp] === 8;
+    let playPts = g.dealCard[play] + g.dealRoem[play] + (pitPlay ? 100 : 0);
+    let oppPts = g.dealCard[opp] + g.dealRoem[opp] + (pitOpp ? 100 : 0);
+    const totalRoem = g.dealRoem[0] + g.dealRoem[1];
+    const awarded = [0, 0];
+    let nat = false;
+    if (playPts > oppPts) { awarded[play] = playPts; awarded[opp] = oppPts; }
+    else { nat = true; awarded[opp] = 162 + totalRoem + (pitOpp ? 100 : 0); awarded[play] = 0; }
+    g.cumulative[0] += awarded[0];
+    g.cumulative[1] += awarded[1];
+    const madeTxt = nat
+      ? `${TEAM[play]} went <span class="lose">NAT</span> — ${TEAM[opp]} take everything.`
+      : `${TEAM[play]} <span class="win">made it</span>.`;
+    this.addLog(nat ? 'nat' : 'deal',
+      `Deal ${g.deal}: ${TEAM[play]} ${playPts} vs ${TEAM[opp]} ${oppPts}. ${madeTxt}` + ((pitPlay || pitOpp) ? ' <b>PIT +100</b>!' : ''));
+    g.lastResult = {
+      deal: g.deal, play, opp, playPts, oppPts, nat, pitPlay, pitOpp, awarded, totalRoem,
+      trump: g.trump, chooser: g.chooser, cumulative: g.cumulative.slice(),
+    };
+    this.phase = g.deal >= this.matchDeals ? 'matchover' : 'scored';
+    this.broadcast();
+    if (this.phase === 'scored') this.after(this.timings.dealAuto, () => this.advance());
+  }
+
+  advance() {
+    if (this.advanced || this.phase !== 'scored') return;
+    this.advanced = true;
+    this.newDeal();
+  }
+  newMatch() {
+    if (this.phase !== 'matchover') return;
+    this.clearTimers();
+    this.startGame();
+  }
+
+  /* ============================================================
+                     INBOUND EVENT DISPATCH
+     Both transports funnel in-room actions here so the rules stay in one place.
+     ============================================================ */
+  handle(playerId, event, data) {
+    data = data || {};
+    switch (event) {
+      case 'start':
+        if (this.phase === 'lobby' && this.hostId === playerId) this.startGame();
+        break;
+      case 'setDifficulty':
+        if (this.hostId === playerId && this.phase === 'lobby' && ['easy', 'normal', 'hard'].includes(data.level)) {
+          this.botLevel = data.level; this.broadcast();
+        }
+        break;
+      case 'claimSeat':
+        if (this.claimSeat(playerId, data.seat)) this.broadcast();
+        break;
+      case 'chooseTrump':
+        if (this.phase === 'choosing' && this.seatOf(playerId) === this.g.chooser) this.setTrump(data.suit);
+        break;
+      case 'play': {
+        const err = this.play(playerId, data.cardId);
+        if (err) this.send(playerId, 'error', { msg: err });
+        break;
+      }
+      case 'next': this.advance(); break;
+      case 'newMatch': this.newMatch(); break;
+      default: break;
+    }
+  }
+
+  /* ============================================================
+                        STATE BROADCAST
+     ============================================================ */
+  broadcast() {
+    for (const s of this.seats) {
+      if (s && !s.isBot && s.connected) this.send(s.playerId, 'state', this.viewFor(this.seatOf(s.playerId)));
+    }
+    for (const pid of this.spectators.keys()) this.send(pid, 'state', this.viewFor(-1));
+  }
+
+  viewFor(mySeat) {
+    const g = this.g;
+    const seats = this.seats.map((s, i) => ({
+      seat: i, label: SEAT_LABEL[i],
+      name: s ? s.name : '(open)',
+      isBot: s ? s.isBot : false,
+      connected: s ? s.connected : false,
+      present: !!s,
+      team: E.teamOf(i),
+      cardCount: g && g.hands ? g.hands[i].length : 0,
+      isHost: s && s.playerId === this.hostId,
+    }));
+    const base = {
+      code: this.code, phase: this.phase, mySeat,
+      seats, hostSeat: this.seatOf(this.hostId),
+      log: this.log.slice(-40),
+      canStart: this.phase === 'lobby',
+      botLevel: this.botLevel,
+    };
+    if (!g) return base;
+    const mine = (mySeat >= 0 && g.hands) ? g.hands[mySeat].map(c => ({ suit: c.suit, rank: c.rank, id: E.cardId(c) })) : [];
+    let legal = [];
+    if (this.phase === 'playing' && !g.resolving && mySeat === g.turn && mySeat >= 0)
+      legal = E.legalMoves(g.hands[mySeat], g.trick, g.trump).map(E.cardId);
+    return Object.assign(base, {
+      deal: g.deal, matchDeals: this.matchDeals,
+      trump: g.trump, dealer: g.dealer, chooser: g.chooser,
+      turn: g.turn, leader: g.leader, resolving: !!g.resolving,
+      trick: g.trick.map(t => ({ seat: t.seat, card: { suit: t.card.suit, rank: t.card.rank, id: E.cardId(t.card) } })),
+      cumulative: g.cumulative,
+      hand: mine, legal,
+      needTrump: this.phase === 'choosing' && mySeat === g.chooser,
+      lastResult: g.lastResult,
+    });
+  }
+}
+
+const API = { GameRoom, SEAT_LABEL, TEAM, sym, DEFAULT_MATCH_DEALS, DEFAULT_TIMINGS };
+
+if (typeof module !== 'undefined' && module.exports) module.exports = API;   // Node / server.js
+else root.KJGameRoom = API;                                                  // browser (window/self)
+
+})(typeof self !== 'undefined' ? self : this);

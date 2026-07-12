@@ -1,0 +1,11 @@
+{
+  "appId": "hu.shareline.klaverjassen",
+  "appName": "Klaverjassen",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#06301c"
+  }
+}

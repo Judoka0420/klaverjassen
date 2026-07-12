@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Klaverjassen</string>
+    <string name="title_activity_main">Klaverjassen</string>
+    <string name="package_name">hu.shareline.klaverjassen</string>
+    <string name="custom_url_scheme">hu.shareline.klaverjassen</string>
+</resources>

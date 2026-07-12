@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Klaverjassen — Rotterdam Rules</title>
+<style>
+  :root{
+    --felt:#0b6b3a; --felt2:#0a5730; --gold:#e8c766; --ink:#12241a;
+    --card:#fbfbf5; --red:#c62828; --black:#1c1c1c;
+    --panel:#0e2a1d; --panelbd:#1c4a34; --txt:#eaf3ec; --dim:#9ab6a6;
+    --we:#5db3ff; --they:#ff9d6b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:"Segoe UI",system-ui,Arial,sans-serif;background:#06301c;color:var(--txt)}
+  #app{display:flex;height:100%;min-height:100vh}
+  /* ---- table ---- */
+  #tablewrap{flex:1;position:relative;min-width:0;display:flex;flex-direction:column}
+  #topbar{display:flex;gap:14px;align-items:center;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--panelbd);flex-wrap:wrap}
+  .score{display:flex;align-items:center;gap:8px;font-weight:600}
+  .pill{padding:3px 10px;border-radius:999px;font-size:13px;background:#0a3d27;border:1px solid var(--panelbd)}
+  .we{color:var(--we)} .they{color:var(--they)}
+  #trumpBadge{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:15px}
+  #trumpSym{font-size:26px;line-height:1}
+  #table{flex:1;position:relative;background:
+      radial-gradient(ellipse at center, var(--felt) 0%, var(--felt2) 70%, #063d22 100%);
+      overflow:hidden;min-height:440px}
+  .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:6px;transition:filter .2s}
+  .seat .name{font-size:13px;font-weight:700;padding:2px 10px;border-radius:999px;background:#0009;border:1px solid #ffffff22}
+  .seat.turn .name{background:var(--gold);color:#222;box-shadow:0 0 14px var(--gold)}
+  .seat.dealer .name::after{content:" (D)";color:var(--gold);font-weight:700}
+  #seat-2{top:10px;left:50%;transform:translateX(-50%)}
+  #seat-1{left:14px;top:50%;transform:translateY(-50%)}
+  #seat-3{right:14px;top:50%;transform:translateY(-50%)}
+  #seat-0{bottom:8px;left:50%;transform:translateX(-50%)}
+  .teamtag{font-size:10px;letter-spacing:.5px;opacity:.8}
+  /* hands of bots: fanned backs */
+  .backrow{display:flex}
+  .backrow.vert{flex-direction:column}
+  .cardback{width:34px;height:48px;border-radius:5px;background:
+     repeating-linear-gradient(45deg,#123f8a,#123f8a 5px,#1b53b0 5px,#1b53b0 10px);
+     border:1px solid #ffffff55;margin-left:-20px;box-shadow:0 1px 3px #0006}
+  .backrow.vert .cardback{margin-left:0;margin-top:-34px}
+  .backrow .cardback:first-child,.backrow.vert .cardback:first-child{margin:0}
+  /* trick area */
+  #trick{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:230px;height:200px}
+  .tcard{position:absolute;transition:all .25s ease}
+  .tc-0{left:50%;bottom:0;transform:translateX(-50%)}
+  .tc-2{left:50%;top:0;transform:translateX(-50%)}
+  .tc-1{left:0;top:50%;transform:translateY(-50%)}
+  .tc-3{right:0;top:50%;transform:translateY(-50%)}
+  /* generic card */
+  .card{width:58px;height:82px;border-radius:7px;background:var(--card);color:var(--black);
+     border:1px solid #0003;box-shadow:0 2px 5px #0005;position:relative;user-select:none;
+     display:flex;align-items:center;justify-content:center;font-weight:800}
+  .card .rk{position:absolute;top:3px;left:5px;font-size:15px;line-height:1}
+  .card .rk.b{top:auto;left:auto;bottom:3px;right:5px;transform:rotate(180deg)}
+  .card .big{font-size:30px}
+  .card.red{color:var(--red)}
+  /* human hand */
+  #handbar{background:var(--panel);border-top:1px solid var(--panelbd);padding:12px 10px 16px;display:flex;flex-direction:column;align-items:center;gap:6px}
+  #hand{display:flex;justify-content:center;flex-wrap:wrap;gap:0}
+  #hand .card{width:66px;height:94px;margin-left:-14px;cursor:default;transition:transform .12s, box-shadow .12s;border-radius:8px}
+  #hand .card:first-child{margin-left:0}
+  #hand .card .big{font-size:34px}
+  #hand .card.legal{cursor:pointer;box-shadow:0 0 0 2px var(--gold),0 3px 8px #0007}
+  #hand .card.legal:hover{transform:translateY(-16px)}
+  #hand .card.illegal{filter:brightness(.6) saturate(.6)}
+  #handlabel{font-size:12px;color:var(--dim);min-height:16px}
+  /* sidebar */
+  #side{width:290px;background:var(--panel);border-left:1px solid var(--panelbd);display:flex;flex-direction:column}
+  #side h1{font-size:16px;margin:0;padding:12px 14px;border-bottom:1px solid var(--panelbd);letter-spacing:.3px}
+  #side h1 small{display:block;font-size:11px;color:var(--dim);font-weight:400;letter-spacing:0}
+  #log{flex:1;overflow:auto;padding:10px 12px;font-size:12.5px;line-height:1.5}
+  #log .entry{padding:5px 8px;border-radius:6px;margin-bottom:5px;background:#0a3d2755;border-left:3px solid var(--panelbd)}
+  #log .entry.roem{border-left-color:var(--gold);background:#3a300f88}
+  #log .entry.deal{border-left-color:var(--we);background:#0a2c4655}
+  #log .entry.nat{border-left-color:var(--red);background:#4a1414aa}
+  #log .entry b{color:var(--gold)}
+  #rulesbtn{margin:0;border:0;border-top:1px solid var(--panelbd);background:#0a3d27;color:var(--txt);padding:9px;cursor:pointer;font-size:12px}
+  #rulesbtn:hover{background:#0e4c31}
+  /* toast */
+  #toast{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:var(--gold);color:#241f08;
+     font-weight:800;padding:8px 18px;border-radius:999px;box-shadow:0 4px 16px #0008;opacity:0;transition:opacity .25s, transform .25s;pointer-events:none;z-index:20;font-size:14px}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(4px)}
+  /* top-bar button */
+  .tbtn{background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .tbtn:hover{background:#0e4c31}
+  .tbtn.on{background:var(--gold);color:#241f08;border-color:var(--gold)}
+  /* cheat sheet panel */
+  #cheat{position:absolute;left:10px;bottom:10px;z-index:35;width:250px;background:#07281bf2;border:1px solid var(--panelbd);
+     border-radius:10px;padding:9px 11px 10px;box-shadow:0 6px 20px #0007;font-size:12px}
+  #cheat.hidden{display:none}
+  .cheat-hd{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:12.5px;color:var(--gold);margin-bottom:7px;letter-spacing:.3px}
+  .cheat-hd .x{cursor:pointer;color:var(--dim);font-weight:700}
+  .cheat-hd .x:hover{color:#fff}
+  .cheat-row{display:flex;align-items:center;gap:6px;margin:4px 0}
+  .cheat-row .lbl{width:44px;font-size:11px;font-weight:700;color:var(--dim);flex:none}
+  .cheat-row .lbl.tr{color:var(--gold)}
+  .tiles{display:flex;gap:3px;flex:1}
+  .tile{flex:1;background:var(--card);color:var(--black);border-radius:4px;text-align:center;padding:2px 0 3px;line-height:1.05;box-shadow:0 1px 2px #0005}
+  .tile.red{color:var(--red)}
+  .tile .r{font-size:12px;font-weight:800;display:block}
+  .tile .v{font-size:9.5px;font-weight:700;opacity:.7;display:block}
+  .tile.zero .v{opacity:.4}
+  .cheat-arrow{font-size:9px;color:var(--dim);margin:2px 0 0 48px}
+  .cheat-roem{margin-top:8px;padding-top:7px;border-top:1px solid var(--panelbd);font-size:10.5px;line-height:1.5;color:var(--dim)}
+  .cheat-roem b{color:var(--txt)}
+  @media(max-width:900px){#cheat{width:210px}}
+  /* overlay / modal */
+  .overlay{position:absolute;inset:0;background:#02150caa;backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:30}
+  .modal{background:var(--panel);border:1px solid var(--panelbd);border-radius:14px;padding:22px 26px;max-width:440px;box-shadow:0 12px 40px #000a;text-align:center}
+  .modal h2{margin:0 0 6px;font-size:20px}
+  .modal p{margin:4px 0 16px;color:var(--dim);font-size:13.5px;line-height:1.5}
+  .suitbtns{display:flex;gap:12px;justify-content:center}
+  .suitbtn{width:70px;height:88px;border-radius:10px;background:var(--card);border:2px solid transparent;font-size:40px;cursor:pointer;
+     display:flex;align-items:center;justify-content:center;transition:transform .1s, border-color .1s;box-shadow:0 3px 8px #0006}
+  .suitbtn:hover{transform:translateY(-6px);border-color:var(--gold)}
+  .suitbtn.red{color:var(--red)} .suitbtn.black{color:var(--black)}
+  .btn{background:var(--gold);color:#241f08;border:0;border-radius:8px;padding:11px 26px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 3px 8px #0006}
+  .btn:hover{filter:brightness(1.06)}
+  .btn.sec{background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);font-weight:600}
+  .summary{text-align:left;font-size:13.5px;line-height:1.7;background:#0a3d2766;border-radius:10px;padding:12px 16px;margin:8px 0 18px}
+  .summary .row{display:flex;justify-content:space-between}
+  .summary .big{font-size:16px;font-weight:800}
+  .win{color:#7ee0a0}.lose{color:#ff8a8a}
+  #ruleText{text-align:left;font-size:13px;line-height:1.6;max-height:70vh;overflow:auto}
+  #ruleText h3{color:var(--gold);margin:14px 0 4px;font-size:14px}
+  #ruleText code{background:#0a3d27;padding:1px 5px;border-radius:4px}
+  table.vt{border-collapse:collapse;font-size:12px;margin:4px 0}
+  table.vt td{border:1px solid var(--panelbd);padding:2px 7px;text-align:center}
+  @media(max-width:900px){#side{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tablewrap">
+    <div id="topbar">
+      <div class="score"><span class="pill">Deal <b id="dealNo">1</b>/16</span></div>
+      <div class="score"><span class="we">We (You + North)</span><span class="pill we" id="scoreWe">0</span></div>
+      <div class="score"><span class="they">They (West + East)</span><span class="pill they" id="scoreThey">0</span></div>
+      <button id="cheatBtn" class="tbtn on">🃏 Cheat sheet</button>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--dim);font-weight:600">🤖<select id="diffSel" style="background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);border-radius:7px;padding:4px 8px;font-size:12.5px;font-weight:700;cursor:pointer"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
+      <div id="trumpBadge"><span class="teamtag">TRUMP</span><span id="trumpSym">–</span><span id="trumpBy" class="teamtag"></span></div>
+    </div>
+    <div id="table">
+      <div id="toast"></div>
+      <div class="seat" id="seat-2"><div class="name">North</div><div class="teamtag we">We · partner</div><div class="backrow" id="backs-2"></div></div>
+      <div class="seat" id="seat-1"><div class="backrow vert" id="backs-1"></div><div class="name">West</div><div class="teamtag they">They</div></div>
+      <div class="seat" id="seat-3"><div class="backrow vert" id="backs-3"></div><div class="name">East</div><div class="teamtag they">They</div></div>
+      <div id="trick"></div>
+      <div id="cheat">
+        <div class="cheat-hd">Card cheat sheet<span class="x" id="cheatClose">✕</span></div>
+        <div class="cheat-row"><span class="lbl tr" id="cheatTrumpLbl">Trump</span><div class="tiles" id="cheatTrump"></div></div>
+        <div class="cheat-row"><span class="lbl">Plain</span><div class="tiles" id="cheatPlain"></div></div>
+        <div class="cheat-arrow">◀ strongest · weakest ▶ &nbsp;·&nbsp; small numbers = card points</div>
+        <div class="cheat-roem"><b>Roem</b> run3 <b>20</b> · run4 <b>50</b> · stuk K+Q <b>20</b> · last trick <b>10</b> · pit <b>100</b></div>
+      </div>
+      <div class="seat" id="seat-0"><div class="name">You (South)</div><div class="teamtag we">We</div></div>
+    </div>
+    <div id="handbar">
+      <div id="handlabel"></div>
+      <div id="hand"></div>
+    </div>
+  </div>
+  <div id="side">
+    <h1>Klaverjassen<small>Rotterdam rules · you vs 3 bots</small></h1>
+    <div id="log"></div>
+    <button id="rulesbtn">📖 Rules &amp; obligations</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Klaverjassen — Rotterdam rules
+   4 players, 2 teams. You = South (seat 0). Partner = North (2).
+   Opponents West (1) & East (3). Play is clockwise: 0→1→2→3.
+   ============================================================ */
+
+const SUITS=['clubs','diamonds','hearts','spades'];
+const SUIT_SYM={clubs:'♣',diamonds:'♦',hearts:'♥',spades:'♠'};
+const SUIT_RED={clubs:false,spades:false,diamonds:true,hearts:true};
+const RANKS=['7','8','9','10','J','Q','K','A'];
+const SEQ=['7','8','9','10','J','Q','K','A'];          // order for roem sequences
+
+const TRUMP_VAL={J:20,9:14,A:11,'10':10,K:4,Q:3,8:0,7:0};
+const PLAIN_VAL={A:11,'10':10,K:4,Q:3,J:2,9:0,8:0,7:0};
+const TRUMP_STR={J:8,9:7,A:6,'10':5,K:4,Q:3,8:2,7:1};
+const PLAIN_STR={A:8,'10':7,K:6,Q:5,J:4,9:3,8:2,7:1};
+
+const SEAT_NAMES=['You (South)','West','North','East'];
+const teamOf=s=>s%2;                 // seats 0,2 -> team 0 (We); 1,3 -> team 1 (They)
+const TEAM_NAME=['We','They'];
+
+const cardVal=(c,tr)=> c.suit===tr?TRUMP_VAL[c.rank]:PLAIN_VAL[c.rank];
+const cardStr=(c,tr)=> c.suit===tr?100+TRUMP_STR[c.rank]:PLAIN_STR[c.rank];
+
+let state=null;
+
+/* ---------- deck ---------- */
+function freshDeck(){
+  const d=[];
+  for(const s of SUITS) for(const r of RANKS) d.push({suit:s,rank:r});
+  for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]];}
+  return d;
+}
+
+/* ---------- trick winner (index within played cards, in play order) ---------- */
+function winnerIndex(cards,trump){
+  const led=cards[0].suit; let bi=0,bs=-1;
+  for(let i=0;i<cards.length;i++){
+    const c=cards[i];
+    let sc = c.suit===trump ? 100+TRUMP_STR[c.rank]
+           : c.suit===led   ? PLAIN_STR[c.rank]
+           : -1;
+    if(sc>bs){bs=sc;bi=i;}
+  }
+  return bi;
+}
+function trickWinnerSeat(trick,trump){
+  const idx=winnerIndex(trick.map(t=>t.card),trump);
+  return trick[idx].seat;
+}
+
+/* ---------- Rotterdam legal-move logic ----------
+   1. Must follow the led suit if able.
+   2. If void of led suit, must play a trump (if you hold one) — introeven verplicht.
+   3. When a trump is already in the trick you must OVERTRUMP if you can — and this
+      applies even when your partner is currently winning (the Rotterdam signature).
+   4. If you cannot overtrump an existing trump, you are free to play anything.
+   5. If trump is led, you must follow trump and overtrump the highest trump if able.
+*/
+function legalMoves(hand,trick,trump){
+  if(trick.length===0) return hand.slice();
+  const led=trick[0].card.suit;
+  const trumpsInTrick=trick.filter(t=>t.card.suit===trump).map(t=>t.card);
+  const highTrump = trumpsInTrick.length ? Math.max(...trumpsInTrick.map(c=>TRUMP_STR[c.rank])) : -1;
+  const myTrumps=hand.filter(c=>c.suit===trump);
+
+  if(led===trump){
+    if(myTrumps.length){
+      const higher=myTrumps.filter(c=>TRUMP_STR[c.rank]>highTrump);
+      return higher.length?higher:myTrumps;      // overtrump if able, else any trump
+    }
+    return hand.slice();                          // void of trump entirely
+  }
+  const hasLed=hand.filter(c=>c.suit===led);
+  if(hasLed.length) return hasLed;                // follow suit
+  if(!myTrumps.length) return hand.slice();       // no led suit, no trump -> discard anything
+  if(trumpsInTrick.length===0) return myTrumps;   // nobody trumped yet -> must trump
+  const higher=myTrumps.filter(c=>TRUMP_STR[c.rank]>highTrump);
+  return higher.length?higher:hand.slice();       // must overtrump if able, else free
+}
+
+/* ---------- roem on a completed 4-card trick ---------- */
+function computeRoem(cards,trump){
+  let roem=0; const labels=[];
+  // sequences per suit (longest consecutive run in that suit)
+  for(const s of SUITS){
+    const idx=cards.filter(c=>c.suit===s).map(c=>SEQ.indexOf(c.rank)).sort((a,b)=>a-b);
+    let best=idx.length?1:0,cur=1;
+    for(let i=1;i<idx.length;i++){ if(idx[i]===idx[i-1]+1){cur++;best=Math.max(best,cur);} else cur=1; }
+    if(best>=4){roem+=50;labels.push(SUIT_SYM[s]+' run of 4 +50');}
+    else if(best>=3){roem+=20;labels.push(SUIT_SYM[s]+' run of 3 +20');}
+  }
+  // stuk: King + Queen of trump present together
+  if(cards.some(c=>c.suit===trump&&c.rank==='K') && cards.some(c=>c.suit===trump&&c.rank==='Q')){
+    roem+=20;labels.push('stuk (trump K-Q) +20');
+  }
+  return {roem,labels};
+}
+
+/* ============================================================
+                        GAME FLOW
+   ============================================================ */
+function newMatch(){
+  state={ deal:0, cumulative:[0,0] };
+  logClear();
+  log('deal','Match start — 16 deals, Rotterdam rules. You are South; North is your partner.');
+  newDeal();
+}
+
+function newDeal(){
+  state.deal++;
+  const dealer=(3+(state.deal-1))%4;       // deal 1: dealer=East, chooser=You
+  const chooser=(dealer+1)%4;
+  const deck=freshDeck();
+  const hands=[[],[],[],[]];
+  for(let i=0;i<32;i++) hands[i%4].push(deck[i]);
+  hands.forEach(h=>h.sort(handComparator(null)));
+  Object.assign(state,{
+    dealer,chooser,hands,trump:null,
+    trick:[],leader:chooser,turn:chooser,trickNo:0,
+    dealCard:[0,0],dealRoem:[0,0],tricksWon:[0,0],played:[],
+    phase:'choosing', lastWinner:null
+  });
+  render();
+  log('deal',`— Deal ${state.deal} — ${SEAT_NAMES[dealer]} deals. ${SEAT_NAMES[chooser]} (${TEAM_NAME[teamOf(chooser)]}) chooses trump.`);
+  if(chooser===0) askTrump();
+  else { const t=botChooseTrump(chooser); setTimeout(()=>setTrump(t),650); }
+}
+
+// ascending within each suit: lowest (weakest) card on the left.
+// once trump is known, the trump suit ranks by trump strength; otherwise by natural rank.
+function handComparator(trump){
+  return (a,b)=>{
+    if(a.suit!==b.suit) return SUITS.indexOf(a.suit)-SUITS.indexOf(b.suit);
+    if(!trump) return SEQ.indexOf(a.rank)-SEQ.indexOf(b.rank);
+    const sa=a.suit===trump?TRUMP_STR[a.rank]:PLAIN_STR[a.rank];
+    const sb=b.suit===trump?TRUMP_STR[b.rank]:PLAIN_STR[b.rank];
+    return sa-sb;
+  };
+}
+
+function setTrump(suit){
+  state.trump=suit; state.phase='playing';
+  // re-sort hands now that trump is known (ascending per suit, trump by trump strength)
+  state.hands.forEach(h=>h.sort(handComparator(suit)));
+  log('deal',`Trump is ${SUIT_SYM[suit]} — chosen by ${SEAT_NAMES[state.chooser]}.`);
+  render();
+  nextTurn();
+}
+
+function nextTurn(){
+  if(state.phase!=='playing') return;
+  render();
+  const seat=state.turn;
+  if(seat===0){ renderHand(); return; }        // wait for human click
+  setTimeout(()=>{ playCard(seat, chooseBotCard(seat)); }, 620);
+}
+
+function playCard(seat,card){
+  // remove from hand
+  const h=state.hands[seat];
+  const i=h.findIndex(c=>c.suit===card.suit&&c.rank===card.rank);
+  if(i<0) return;
+  h.splice(i,1);
+  state.trick.push({seat,card});
+  state.played.push(card);           // deal history for card-counting (hard bots)
+  render();
+  if(seat===0){ clearHandLegal(); }
+  if(state.trick.length<4){
+    state.turn=(seat+1)%4;
+    nextTurn();
+  } else {
+    setTimeout(resolveTrick, 780);
+  }
+}
+
+function resolveTrick(){
+  const trick=state.trick, cards=trick.map(t=>t.card), tr=state.trump;
+  const winner=trickWinnerSeat(trick,tr);
+  const tm=teamOf(winner);
+  const pts=cards.reduce((s,c)=>s+cardVal(c,tr),0);
+  const {roem,labels}=computeRoem(cards,tr);
+  state.dealCard[tm]+=pts;
+  state.dealRoem[tm]+=roem;
+  state.tricksWon[tm]++;
+  state.lastWinner=winner;
+  state.trickNo++;
+  let msg=`Trick ${state.trickNo}: ${SEAT_NAMES[winner]} wins (${pts} pts).`;
+  if(roem){ toast(`ROEM +${roem}`); msg+=` Roem +${roem}: ${labels.join(', ')}.`; }
+  log(roem?'roem':'', msg);
+
+  if(state.trickNo===8){
+    state.dealCard[tm]+=10;                     // last-trick bonus
+    log('', `Last trick +10 to ${TEAM_NAME[tm]}.`);
+    state.trick=[]; render();
+    setTimeout(scoreDeal, 500);
+  } else {
+    state.leader=winner; state.turn=winner;
+    setTimeout(()=>{ state.trick=[]; nextTurn(); }, 250);
+  }
+}
+
+function scoreDeal(){
+  state.phase='scored';
+  const play=teamOf(state.chooser), opp=1-play;
+  const pitPlay=state.tricksWon[play]===8, pitOpp=state.tricksWon[opp]===8;
+  let playPts=state.dealCard[play]+state.dealRoem[play]+(pitPlay?100:0);
+  let oppPts =state.dealCard[opp] +state.dealRoem[opp] +(pitOpp?100:0);
+  const totalRoem=state.dealRoem[0]+state.dealRoem[1];
+  let awarded=[0,0], nat=false;
+  if(playPts>oppPts){
+    awarded[play]=playPts; awarded[opp]=oppPts;
+  } else {
+    nat=true;
+    awarded[opp]=162+totalRoem+(pitOpp?100:0);
+    awarded[play]=0;
+  }
+  state.cumulative[0]+=awarded[0];
+  state.cumulative[1]+=awarded[1];
+
+  const madeTxt = nat
+    ? `${TEAM_NAME[play]} went <span class="lose">NAT</span> — ${TEAM_NAME[opp]} take everything.`
+    : `${TEAM_NAME[play]} <span class="win">made it</span>.`;
+  log(nat?'nat':'deal',
+    `Deal ${state.deal} result: ${TEAM_NAME[play]} ${playPts} vs ${TEAM_NAME[opp]} ${oppPts}. ${madeTxt}`
+    + (pitPlay||pitOpp?` <b>PIT +100</b>!`:''));
+  render();
+  showDealSummary({play,opp,playPts,oppPts,nat,pitPlay,pitOpp,awarded,totalRoem});
+}
+
+/* ============================================================
+        BOT AI — difficulty levels: easy | normal | hard
+   ============================================================ */
+let botLevel = localStorage.getItem('kj_botlevel') || 'normal';
+const ALL_CARDS=[]; for(const s of SUITS) for(const r of RANKS) ALL_CARDS.push({suit:s,rank:r});
+const cid=c=>c.suit+c.rank;
+const vLow =(a,tr)=>a.reduce((x,y)=>cardVal(x,tr)<=cardVal(y,tr)?x:y);
+const vHigh=(a,tr)=>a.reduce((x,y)=>cardVal(x,tr)>=cardVal(y,tr)?x:y);
+
+function botChooseTrump(seat){
+  const hand=state.hands[seat];
+  if(botLevel==='easy'){ let best=SUITS[0],bc=-1; for(const s of SUITS){const n=hand.filter(c=>c.suit===s).length; if(n>bc){bc=n;best=s;}} return best; }
+  let best=SUITS[0],bs=-Infinity;
+  for(const s of SUITS){
+    let sc=0;
+    for(const c of hand) sc += c.suit===s ? TRUMP_VAL[c.rank]+6 : PLAIN_VAL[c.rank]*0.3;
+    if(hand.some(c=>c.suit===s&&c.rank==='J')) sc+= botLevel==='hard'?22:15;
+    if(hand.some(c=>c.suit===s&&c.rank==='9')) sc+= botLevel==='hard'?12:8;
+    const n=hand.filter(c=>c.suit===s).length; sc+= botLevel==='hard'?n*n*1.5:n*n;
+    if(botLevel==='hard'){ sc+=hand.filter(c=>c.suit!==s&&c.rank==='A').length*4; if(n<3)sc-=6; }
+    if(sc>bs){bs=sc;best=s;}
+  }
+  return best;
+}
+
+function unseenFor(seat){
+  const seen=new Set();
+  state.hands[seat].forEach(c=>seen.add(cid(c)));
+  (state.played||[]).forEach(c=>seen.add(cid(c)));
+  return ALL_CARDS.filter(c=>!seen.has(cid(c)));
+}
+function unbeatableCard(card,tr,unseen){
+  if(card.suit===tr) return !unseen.some(u=>u.suit===tr&&TRUMP_STR[u.rank]>TRUMP_STR[card.rank]);
+  if(unseen.some(u=>u.suit===tr)) return false;
+  return !unseen.some(u=>u.suit===card.suit&&PLAIN_STR[u.rank]>PLAIN_STR[card.rank]);
+}
+function dumpLowCard(legal,tr){ const nonT=legal.filter(c=>c.suit!==tr); return vLow(nonT.length?nonT:legal,tr); }
+
+function chooseBotCard(seat){
+  const tr=state.trump;
+  const legal=legalMoves(state.hands[seat],state.trick,tr);
+  if(!legal.length) return null;
+  if(botLevel==='easy') return legal[Math.floor(Math.random()*legal.length)];
+  if(botLevel==='hard') return hardPlay(seat,tr,legal);
+  return normalPlay(seat,tr,legal);
+}
+function normalPlay(seat,tr,legal){
+  if(state.trick.length===0){
+    const aces=legal.filter(c=>c.suit!==tr&&c.rank==='A'); if(aces.length) return aces[0];
+    const plain=legal.filter(c=>c.suit!==tr); return plain.length?vLow(plain,tr):vLow(legal,tr);
+  }
+  const winSeat=trickWinnerSeat(state.trick,tr), partner=(seat+2)%4, last=state.trick.length===3;
+  const winners=legal.filter(c=>trickWinnerSeat(state.trick.concat([{seat,card:c}]),tr)===seat);
+  if(winSeat===partner){
+    const wc=state.trick.find(t=>t.seat===winSeat).card;
+    const solid=last||wc.suit===tr||wc.rank==='A';
+    if(solid) return vHigh(legal,tr);
+    if(winners.length) return vLow(winners,tr);
+    return vLow(legal,tr);
+  }
+  if(winners.length) return vLow(winners,tr);
+  return vLow(legal,tr);
+}
+function hardPlay(seat,tr,legal){
+  const unseen=unseenFor(seat);
+  const declarerSide = state.chooser!=null && (seat%2)===(state.chooser%2);
+  if(state.trick.length===0){
+    const nonTrump=legal.filter(c=>c.suit!==tr), myTrumps=legal.filter(c=>c.suit===tr);
+    const trumpsOut=unseen.some(u=>u.suit===tr);
+    const cashable=nonTrump.filter(c=>unbeatableCard(c,tr,unseen));
+    if(cashable.length) return vHigh(cashable,tr);
+    if(declarerSide&&trumpsOut&&myTrumps.length>=3&&myTrumps.some(c=>c.rank==='J')) return vHigh(myTrumps,tr);
+    const aces=nonTrump.filter(c=>c.rank==='A'); if(aces.length) return aces[0];
+    return nonTrump.length?vLow(nonTrump,tr):vLow(legal,tr);
+  }
+  const winSeat=trickWinnerSeat(state.trick,tr), partner=(seat+2)%4, last=state.trick.length===3;
+  const winners=legal.filter(c=>trickWinnerSeat(state.trick.concat([{seat,card:c}]),tr)===seat);
+  if(winSeat===partner){
+    const wc=state.trick.find(t=>t.seat===winSeat).card;
+    if(last||wc.suit===tr||wc.rank==='A'||unbeatableCard(wc,tr,unseen)) return vHigh(legal,tr);
+    if(winners.length) return vLow(winners,tr);
+    return dumpLowCard(legal,tr);
+  }
+  if(winners.length) return vLow(winners,tr);
+  return dumpLowCard(legal,tr);
+}
+
+/* ============================================================
+                        RENDERING
+   ============================================================ */
+function cardEl(card,trump,cls){
+  const el=document.createElement('div');
+  el.className='card '+(SUIT_RED[card.suit]?'red':'')+(cls?' '+cls:'');
+  const sym=SUIT_SYM[card.suit];
+  el.innerHTML=`<span class="rk">${card.rank}${sym}</span><span class="big">${sym}</span><span class="rk b">${card.rank}${sym}</span>`;
+  return el;
+}
+function render(){
+  document.getElementById('dealNo').textContent=state.deal;
+  document.getElementById('scoreWe').textContent=state.cumulative[0];
+  document.getElementById('scoreThey').textContent=state.cumulative[1];
+  const ts=document.getElementById('trumpSym');
+  ts.textContent=state.trump?SUIT_SYM[state.trump]:'–';
+  ts.style.color=state.trump&&SUIT_RED[state.trump]?'#ff7b7b':'#eaf3ec';
+  document.getElementById('trumpBy').textContent=state.trump?('by '+SEAT_NAMES[state.chooser]):'';
+  // seat turn / dealer highlight + bot backs
+  for(let s=0;s<4;s++){
+    const seatEl=document.getElementById('seat-'+s);
+    seatEl.classList.toggle('turn',state.phase==='playing'&&state.turn===s);
+    seatEl.classList.toggle('dealer',state.dealer===s);
+    if(s!==0){
+      const b=document.getElementById('backs-'+s); b.innerHTML='';
+      for(let k=0;k<state.hands[s].length;k++){const d=document.createElement('div');d.className='cardback';b.appendChild(d);}
+    }
+  }
+  // trick
+  const tEl=document.getElementById('trick'); tEl.innerHTML='';
+  for(const t of state.trick){
+    const c=cardEl(t.card,state.trump,'tcard tc-'+t.seat); tEl.appendChild(c);
+  }
+  if(state.turn===0&&state.phase==='playing') renderHand(); else renderHand(true);
+  renderCheat();
+}
+
+/* ---------- cheat sheet ---------- */
+const CHEAT_TRUMP=['J','9','A','10','K','Q','8','7'];   // trump strength order
+const CHEAT_PLAIN=['A','10','K','Q','J','9','8','7'];   // plain strength order
+function buildTiles(el,order,valMap,suit){
+  el.innerHTML='';
+  for(const r of order){
+    const v=valMap[r];
+    const t=document.createElement('div');
+    t.className='tile'+(suit&&SUIT_RED[suit]?' red':'')+(v===0?' zero':'');
+    t.innerHTML=`<span class="r">${r}${suit?SUIT_SYM[suit]:''}</span><span class="v">${v}</span>`;
+    el.appendChild(t);
+  }
+}
+function renderCheat(){
+  const tr=state?state.trump:null;
+  document.getElementById('cheatTrumpLbl').innerHTML = tr?('Trump '+SUIT_SYM[tr]):'Trump';
+  buildTiles(document.getElementById('cheatTrump'),CHEAT_TRUMP,TRUMP_VAL,tr);
+  buildTiles(document.getElementById('cheatPlain'),CHEAT_PLAIN,PLAIN_VAL,null);
+}
+document.getElementById('cheatBtn').addEventListener('click',()=>{
+  const c=document.getElementById('cheat');
+  const hidden=c.classList.toggle('hidden');
+  document.getElementById('cheatBtn').classList.toggle('on',!hidden);
+});
+document.getElementById('cheatClose').addEventListener('click',()=>{
+  document.getElementById('cheat').classList.add('hidden');
+  document.getElementById('cheatBtn').classList.remove('on');
+});
+
+function renderHand(passive){
+  const handEl=document.getElementById('hand'); handEl.innerHTML='';
+  const label=document.getElementById('handlabel');
+  const legal = (!passive && state.phase==='playing' && state.turn===0)
+      ? legalMoves(state.hands[0],state.trick,state.trump) : [];
+  const legalKey=new Set(legal.map(c=>c.suit+c.rank));
+  for(const card of state.hands[0]){
+    const isLegal=legalKey.has(card.suit+card.rank);
+    const el=cardEl(card,state.trump, !passive&&state.turn===0&&state.phase==='playing' ? (isLegal?'legal':'illegal'):'');
+    if(isLegal) el.addEventListener('click',()=>{ if(state.turn===0&&state.phase==='playing') playCard(0,card); });
+    handEl.appendChild(el);
+  }
+  if(passive||state.phase!=='playing'){ label.textContent = state.phase==='choosing'?'Choose a trump suit…':''; }
+  else if(state.turn===0){
+    label.textContent = describeObligation(legal);
+  } else label.textContent = `${SEAT_NAMES[state.turn]} to play…`;
+}
+function clearHandLegal(){ document.querySelectorAll('#hand .card').forEach(e=>e.classList.remove('legal','illegal')); }
+
+function describeObligation(legal){
+  if(state.trick.length===0) return 'Your lead — play any card.';
+  const led=state.trick[0].card.suit, tr=state.trump;
+  const haveLed=state.hands[0].some(c=>c.suit===led);
+  if(led===tr) return haveLed?'Trump led — you must follow & overtrump if you can.':'Trump led — you hold none, play anything.';
+  if(haveLed) return `Follow suit (${SUIT_SYM[led]}).`;
+  if(state.hands[0].some(c=>c.suit===tr)){
+    const trumped=state.trick.some(t=>t.card.suit===tr);
+    if(!trumped) return 'Void — you must trump in.';
+    return legal.some(c=>c.suit===tr)?'Void — you must overtrump if you can (even over your partner!).':'Void, cannot overtrump — play anything.';
+  }
+  return 'Void of suit & trump — discard anything.';
+}
+
+/* ---------- trump ask modal ---------- */
+function askTrump(){
+  renderHand(true);
+  document.getElementById('handlabel').textContent='You choose trump this deal — pick a suit.';
+  // keep the cheat sheet visible (and above the dimmed overlay) while choosing
+  document.getElementById('cheat').classList.remove('hidden');
+  document.getElementById('cheatBtn').classList.add('on');
+  renderCheat();
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='ovTrump';
+  ov.innerHTML=`<div class="modal"><h2>Choose trump</h2>
+    <p>You sit left of the dealer, so you name trump — and your team must then score <b>more than</b> the opponents or go <b>nat</b>.</p>
+    <div class="suitbtns">${SUITS.map(s=>`<button class="suitbtn ${SUIT_RED[s]?'red':'black'}" data-s="${s}">${SUIT_SYM[s]}</button>`).join('')}</div></div>`;
+  document.getElementById('table').appendChild(ov);
+  ov.querySelectorAll('.suitbtn').forEach(b=>b.addEventListener('click',()=>{ ov.remove(); setTrump(b.dataset.s); }));
+}
+
+/* ---------- deal summary modal ---------- */
+function showDealSummary(r){
+  const {play,opp,playPts,oppPts,nat,awarded,totalRoem,pitPlay,pitOpp}=r;
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='ovDeal';
+  const done=state.deal>=16;
+  const line=(label,cls,val)=>`<div class="row"><span class="${cls}">${label}</span><span>${val}</span></div>`;
+  ov.innerHTML=`<div class="modal">
+    <h2>Deal ${state.deal} ${nat?'— NAT':'complete'}</h2>
+    <div class="summary">
+      ${line(`${TEAM_NAME[play]} (declared, trump ${SUIT_SYM[state.trump]})`,teamOf(state.chooser)===0?'we':'they',`${playPts} pts`)}
+      ${line(`${TEAM_NAME[opp]}`,opp===0?'we':'they',`${oppPts} pts`)}
+      <div class="row" style="opacity:.75;font-size:12px"><span>roem in deal</span><span>${totalRoem}</span></div>
+      ${(pitPlay||pitOpp)?`<div class="row"><span class="win">PIT +100</span><span>${TEAM_NAME[pitPlay?play:opp]}</span></div>`:''}
+      <hr style="border-color:#ffffff22">
+      <div class="row big">${line('','we',`We +${awarded[0]}`).replace(/<\/?div[^>]*>/g,'')}</div>
+      <div class="row big"><span class="we">We total</span><span>${state.cumulative[0]}</span></div>
+      <div class="row big"><span class="they">They total</span><span>${state.cumulative[1]}</span></div>
+    </div>
+    ${done?matchResultHtml():''}
+    <button class="btn" id="nextBtn">${done?'New match':'Next deal ▶'}</button>
+  </div>`;
+  document.getElementById('table').appendChild(ov);
+  document.getElementById('nextBtn').addEventListener('click',()=>{ ov.remove(); done?newMatch():newDeal(); });
+}
+function matchResultHtml(){
+  const [w,t]=state.cumulative;
+  const res = w>t?'<span class="win">You win the match! 🏆</span>':w<t?'<span class="lose">They win the match.</span>':'It\'s a tie!';
+  return `<p style="font-size:16px;font-weight:800">Final: We ${w} — They ${t}<br>${res}</p>`;
+}
+
+/* ---------- log & toast ---------- */
+function log(cls,html){ const l=document.getElementById('log'); const e=document.createElement('div'); e.className='entry'+(cls?' '+cls:''); e.innerHTML=html; l.appendChild(e); l.scrollTop=l.scrollHeight; }
+function logClear(){ document.getElementById('log').innerHTML=''; }
+let toastT=null;
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1300); }
+
+/* ---------- rules modal ---------- */
+document.getElementById('rulesbtn').addEventListener('click',()=>{
+  const ov=document.createElement('div'); ov.className='overlay';
+  ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>Rotterdam Klaverjassen</h2><div id="ruleText">
+    <h3>The Rotterdam obligations</h3>
+    <b>1.</b> Follow the led suit if you can.<br>
+    <b>2.</b> If you can't follow suit, you <b>must play a trump</b> (introeven).<br>
+    <b>3.</b> When a trump is already on the table you <b>must overtrump</b> it if you can —
+       <b>even when your own partner is winning</b>. This is the signature Rotterdam rule.<br>
+    <b>4.</b> If you can't overtrump an existing trump, you may play anything.
+    <h3>Card values</h3>
+    <table class="vt"><tr><td><b>Trump</b></td><td>J 20</td><td>9 14</td><td>A 11</td><td>10 10</td><td>K 4</td><td>Q 3</td><td>8/7 0</td></tr>
+    <tr><td><b>Plain</b></td><td>A 11</td><td>10 10</td><td>K 4</td><td>Q 3</td><td>J 2</td><td colspan="2">9/8/7 0</td></tr></table>
+    152 card points + 10 for the last trick = <b>162</b> per deal.
+    <h3>Roem (bonuses)</h3>
+    Run of 3 = 20 · run of 4 = 50 ·
+    <b>stuk</b> (trump K+Q) = 20 · run incl. trump K-Q = 40 (3) / 70 (4). Awarded to the team winning that trick.
+    <h3>Winning a deal</h3>
+    The team that chose trump must score <b>more than</b> the opponents (points + roem). If not, they go
+    <b>nat</b> and the opponents take all 162 points plus all roem. Winning every trick = <b>pit</b> (+100).
+    <h3>Match</h3>16 deals; highest cumulative total wins.
+    </div><br><button class="btn sec" id="closeRules">Close</button></div>`;
+  document.getElementById('table').appendChild(ov);
+  document.getElementById('closeRules').addEventListener('click',()=>ov.remove());
+});
+
+/* ---------- bot difficulty selector ---------- */
+const diffSel=document.getElementById('diffSel');
+diffSel.value=botLevel;
+diffSel.addEventListener('change',()=>{
+  botLevel=diffSel.value;
+  localStorage.setItem('kj_botlevel',botLevel);
+  toast('Bots set to '+botLevel[0].toUpperCase()+botLevel.slice(1));
+});
+
+/* ---------- go ---------- */
+newMatch();
+</script>
+</body>
+</html>

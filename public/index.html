@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Klaverjassen Online — Rotterdam Rules</title>
+<style>
+  :root{
+    --felt:#0b6b3a;--felt2:#0a5730;--gold:#e8c766;--card:#fbfbf5;--red:#c62828;--black:#1c1c1c;
+    --panel:#0e2a1d;--panelbd:#1c4a34;--txt:#eaf3ec;--dim:#9ab6a6;--we:#5db3ff;--they:#ff9d6b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:"Segoe UI",system-ui,Arial,sans-serif;background:#06301c;color:var(--txt)}
+  #app{display:flex;height:100%;min-height:100vh}
+  #tablewrap{flex:1;position:relative;min-width:0;display:flex;flex-direction:column}
+  #topbar{display:flex;gap:12px;align-items:center;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--panelbd);flex-wrap:wrap}
+  .score{display:flex;align-items:center;gap:8px;font-weight:600}
+  .pill{padding:3px 10px;border-radius:999px;font-size:13px;background:#0a3d27;border:1px solid var(--panelbd)}
+  .we{color:var(--we)} .they{color:var(--they)}
+  #roomPill{font-weight:800;letter-spacing:2px}
+  .tbtn{background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .tbtn:hover{background:#0e4c31}.tbtn.on{background:var(--gold);color:#241f08;border-color:var(--gold)}
+  #trumpBadge{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:15px}
+  #trumpSym{font-size:26px;line-height:1}
+  #table{flex:1;position:relative;background:radial-gradient(ellipse at center,var(--felt) 0%,var(--felt2) 70%,#063d22 100%);overflow:hidden;min-height:460px}
+  .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:6px;transition:filter .2s}
+  .seat .name{font-size:13px;font-weight:700;padding:2px 10px;border-radius:999px;background:#0009;border:1px solid #ffffff22;white-space:nowrap}
+  .seat.turn .name{background:var(--gold);color:#222;box-shadow:0 0 14px var(--gold)}
+  .seat.dealer .name::after{content:" (D)";color:var(--gold)}
+  .seat.off .name{opacity:.5;font-style:italic}
+  #sp-2{top:10px;left:50%;transform:translateX(-50%)}
+  #sp-1{left:14px;top:50%;transform:translateY(-50%)}
+  #sp-3{right:14px;top:50%;transform:translateY(-50%)}
+  #sp-0{bottom:8px;left:50%;transform:translateX(-50%)}
+  .teamtag{font-size:10px;letter-spacing:.5px;opacity:.8}
+  .backrow{display:flex}.backrow.vert{flex-direction:column}
+  .cardback{width:34px;height:48px;border-radius:5px;background:repeating-linear-gradient(45deg,#123f8a,#123f8a 5px,#1b53b0 5px,#1b53b0 10px);border:1px solid #ffffff55;margin-left:-20px;box-shadow:0 1px 3px #0006}
+  .backrow.vert .cardback{margin-left:0;margin-top:-34px}
+  .backrow .cardback:first-child,.backrow.vert .cardback:first-child{margin:0}
+  #slots,#trick{position:absolute;inset:0;pointer-events:none}
+  #slots{display:none;z-index:2}
+  #trick{z-index:36}   /* played cards always visible above seats & the cheat panel */
+  #trick .tcard,#slots .tslot{position:absolute}
+  .tslot{width:58px;height:82px;border-radius:7px;background:#ffffff30;border:2px dashed #ffffff90;box-sizing:border-box}
+  .tcard{transition:all .25s ease}
+  .pos-0{left:50%;top:50%;transform:translate(-50%,calc(-50% + 58px))}.pos-2{left:50%;top:50%;transform:translate(-50%,calc(-50% - 58px))}
+  .pos-1{left:50%;top:50%;transform:translate(calc(-50% - 68px),-50%)}.pos-3{left:50%;top:50%;transform:translate(calc(-50% + 68px),-50%)}
+  .tcard.mine{box-shadow:0 0 0 2px var(--gold),0 3px 10px #0008}
+  .card{width:58px;height:82px;border-radius:7px;background:var(--card);color:var(--black);border:1px solid #0003;box-shadow:0 2px 5px #0005;position:relative;user-select:none;display:flex;align-items:center;justify-content:center;font-weight:800}
+  .card .rk{position:absolute;top:3px;left:5px;font-size:15px;line-height:1}
+  .card .rk.b{top:auto;left:auto;bottom:3px;right:5px;transform:rotate(180deg)}
+  .card .big{font-size:30px}.card.red{color:var(--red)}
+  #handbar{background:var(--panel);border-top:1px solid var(--panelbd);padding:12px 10px 16px;display:flex;flex-direction:column;align-items:center;gap:6px}
+  #hand{display:flex;justify-content:center;flex-wrap:wrap;gap:0}
+  #hand .card{width:66px;height:94px;margin-left:-14px;cursor:default;transition:transform .12s,box-shadow .12s;border-radius:8px}
+  #hand .card:first-child{margin-left:0}#hand .card .big{font-size:34px}
+  #hand .card.legal{cursor:pointer;box-shadow:0 0 0 2px var(--gold),0 3px 8px #0007}
+  #hand .card.legal:hover{transform:translateY(-16px)}
+  #hand .card.illegal{filter:brightness(.6) saturate(.6)}
+  #handlabel{font-size:12px;color:var(--dim);min-height:16px;text-align:center}
+  #side{width:290px;background:var(--panel);border-left:1px solid var(--panelbd);display:flex;flex-direction:column}
+  #side h1{font-size:16px;margin:0;padding:12px 14px;border-bottom:1px solid var(--panelbd)}
+  #side h1 small{display:block;font-size:11px;color:var(--dim);font-weight:400}
+  #log{flex:1;overflow:auto;padding:10px 12px;font-size:12.5px;line-height:1.5}
+  #log .entry{padding:5px 8px;border-radius:6px;margin-bottom:5px;background:#0a3d2755;border-left:3px solid var(--panelbd)}
+  #log .entry.roem{border-left-color:var(--gold);background:#3a300f88}
+  #log .entry.deal{border-left-color:var(--we);background:#0a2c4655}
+  #log .entry.nat{border-left-color:var(--red);background:#4a1414aa}
+  #log .entry b{color:var(--gold)}
+  #rulesbtn{margin:0;border:0;border-top:1px solid var(--panelbd);background:#0a3d27;color:var(--txt);padding:9px;cursor:pointer;font-size:12px}#rulesbtn:hover{background:#0e4c31}
+  #toast{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:var(--gold);color:#241f08;font-weight:800;padding:8px 18px;border-radius:999px;box-shadow:0 4px 16px #0008;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;z-index:40;font-size:14px}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(4px)}
+  #toast.err{background:#d24b4b;color:#fff}
+  .overlay{position:absolute;inset:0;background:#02150cd0;backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal{background:var(--panel);border:1px solid var(--panelbd);border-radius:14px;padding:22px 26px;max-width:460px;width:100%;box-shadow:0 12px 40px #000a;text-align:center}
+  .modal h2{margin:0 0 6px;font-size:20px}.modal p{margin:4px 0 16px;color:var(--dim);font-size:13.5px;line-height:1.5}
+  .field{display:flex;flex-direction:column;gap:5px;text-align:left;margin:10px 0}
+  .field label{font-size:12px;color:var(--dim);font-weight:600}
+  .field input{background:#07281b;border:1px solid var(--panelbd);border-radius:8px;color:var(--txt);padding:10px 12px;font-size:15px}
+  .field input:focus{outline:none;border-color:var(--gold)}
+  .row2{display:flex;gap:10px}.row2 input{flex:1;text-transform:uppercase;letter-spacing:2px;font-weight:700}
+  .btn{background:var(--gold);color:#241f08;border:0;border-radius:8px;padding:11px 22px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 3px 8px #0006}
+  .btn:hover{filter:brightness(1.06)}.btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.sec{background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);font-weight:600}
+  .btn.wide{width:100%;margin-top:6px}
+  .sep{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:12px;margin:14px 0}
+  .sep::before,.sep::after{content:"";flex:1;height:1px;background:var(--panelbd)}
+  .suitbtns{display:flex;gap:12px;justify-content:center}
+  .suitbtn{width:66px;height:84px;border-radius:10px;background:var(--card);border:2px solid transparent;font-size:38px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .1s,border-color .1s;box-shadow:0 3px 8px #0006}
+  .suitbtn:hover{transform:translateY(-6px);border-color:var(--gold)}.suitbtn.red{color:var(--red)}.suitbtn.black{color:var(--black)}
+  .summary{text-align:left;font-size:13.5px;line-height:1.7;background:#0a3d2766;border-radius:10px;padding:12px 16px;margin:8px 0 16px}
+  .summary .row{display:flex;justify-content:space-between}.summary .big{font-size:16px;font-weight:800}
+  .win{color:#7ee0a0}.lose{color:#ff8a8a}
+  /* lobby seat picker */
+  .lobbyseats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+  .lseat{border:1px solid var(--panelbd);border-radius:10px;padding:12px;background:#0a3d2755;cursor:pointer;transition:border-color .1s}
+  .lseat:hover{border-color:var(--gold)}
+  .lseat.mine{border-color:var(--gold);background:#3a300f55}
+  .lseat.taken{cursor:default;opacity:.9}
+  .lseat .pos{font-size:11px;color:var(--dim)}.lseat .who{font-weight:700;font-size:14px;margin-top:3px}
+  .lseat.t0 .pos{color:var(--we)}.lseat.t1 .pos{color:var(--they)}
+  .codebig{font-size:34px;font-weight:900;letter-spacing:8px;color:var(--gold);margin:2px 0}
+  .diffrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 4px}
+  .difflbl{font-size:12px;color:var(--dim);font-weight:600}
+  .diffbtns{display:flex;gap:6px}
+  .diffbtn{background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);border-radius:7px;padding:6px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
+  .diffbtn:hover:not(:disabled){background:#0e4c31}
+  .diffbtn.on{background:var(--gold);color:#241f08;border-color:var(--gold)}
+  .diffbtn:disabled{cursor:default;opacity:.85}
+  #cheat{position:absolute;left:10px;bottom:10px;z-index:35;width:250px;background:#07281bf2;border:1px solid var(--panelbd);border-radius:10px;padding:9px 11px 10px;box-shadow:0 6px 20px #0007;font-size:12px}
+  #cheat.hidden{display:none}
+  .cheat-hd{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:12.5px;color:var(--gold);margin-bottom:7px}
+  .cheat-hd .x{cursor:pointer;color:var(--dim);font-weight:700}.cheat-hd .x:hover{color:#fff}
+  .cheat-row{display:flex;align-items:center;gap:6px;margin:4px 0}
+  .cheat-row .lbl{width:44px;font-size:11px;font-weight:700;color:var(--dim);flex:none}.cheat-row .lbl.tr{color:var(--gold)}
+  .tiles{display:flex;gap:3px;flex:1}
+  .tile{flex:1;background:var(--card);color:var(--black);border-radius:4px;text-align:center;padding:2px 0 3px;line-height:1.05;box-shadow:0 1px 2px #0005}
+  .tile.red{color:var(--red)}.tile .r{font-size:12px;font-weight:800;display:block}.tile .v{font-size:9.5px;font-weight:700;opacity:.7;display:block}.tile.zero .v{opacity:.4}
+  .cheat-arrow{font-size:9px;color:var(--dim);margin:2px 0 0 48px}
+  .cheat-roem{margin-top:8px;padding-top:7px;border-top:1px solid var(--panelbd);font-size:10.5px;line-height:1.5;color:var(--dim)}.cheat-roem b{color:var(--txt)}
+  #ruleText{text-align:left;font-size:13px;line-height:1.6;max-height:66vh;overflow:auto}
+  #ruleText h3{color:var(--gold);margin:12px 0 4px;font-size:14px}
+  table.vt{border-collapse:collapse;font-size:12px;margin:4px 0}table.vt td{border:1px solid var(--panelbd);padding:2px 7px;text-align:center}
+  @media(max-width:900px){#side{display:none}#cheat{width:210px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tablewrap">
+    <div id="topbar">
+      <span class="pill" id="roomPill">—</span>
+      <div class="score"><span id="weLbl" class="we">We</span><span class="pill we" id="scoreWe">0</span></div>
+      <div class="score"><span id="theyLbl" class="they">They</span><span class="pill they" id="scoreThey">0</span></div>
+      <span class="pill" id="dealPill" style="display:none">Deal <b id="dealNo">1</b>/16</span>
+      <button id="cheatBtn" class="tbtn on">🃏 Cheat</button>
+      <button id="leaveBtn" class="tbtn">Leave</button>
+      <div id="trumpBadge"><span class="teamtag">TRUMP</span><span id="trumpSym">–</span></div>
+    </div>
+    <div id="table">
+      <div id="toast"></div>
+      <div class="seat" id="sp-2"></div>
+      <div class="seat" id="sp-1"></div>
+      <div class="seat" id="sp-3"></div>
+      <div id="slots"><div class="tslot pos-0"></div><div class="tslot pos-1"></div><div class="tslot pos-2"></div><div class="tslot pos-3"></div></div>
+      <div id="trick"></div>
+      <div id="cheat">
+        <div class="cheat-hd">Card cheat sheet<span class="x" id="cheatClose">✕</span></div>
+        <div class="cheat-row"><span class="lbl tr" id="cheatTrumpLbl">Trump</span><div class="tiles" id="cheatTrump"></div></div>
+        <div class="cheat-row"><span class="lbl">Plain</span><div class="tiles" id="cheatPlain"></div></div>
+        <div class="cheat-arrow">◀ strongest · weakest ▶ &nbsp;·&nbsp; small numbers = card points</div>
+        <div class="cheat-roem"><b>Roem</b> run3 <b>20</b> · run4 <b>50</b> · stuk K+Q <b>20</b> · last trick <b>10</b> · pit <b>100</b></div>
+      </div>
+      <div class="seat" id="sp-0"></div>
+    </div>
+    <div id="handbar">
+      <div id="handlabel"></div>
+      <div id="hand"></div>
+    </div>
+  </div>
+  <div id="side">
+    <h1>Klaverjassen Online<small>Rotterdam rules · play with friends</small></h1>
+    <div id="log"></div>
+    <button id="rulesbtn">📖 Rules &amp; obligations</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const SUIT_SYM={clubs:'♣',diamonds:'♦',hearts:'♥',spades:'♠'};
+const SUIT_RED={clubs:false,spades:false,diamonds:true,hearts:true};
+const SUITS=['clubs','diamonds','hearts','spades'];
+const TRUMP_VAL={J:20,9:14,A:11,'10':10,K:4,Q:3,8:0,7:0};
+const PLAIN_VAL={A:11,'10':10,K:4,Q:3,J:2,9:0,8:0,7:0};
+const CHEAT_TRUMP=['J','9','A','10','K','Q','8','7'];
+const CHEAT_PLAIN=['A','10','K','Q','J','9','8','7'];
+const TEAM_LBL=['North/South','East/West'];
+
+/* identity */
+let playerId=localStorage.getItem('kj_pid');
+if(!playerId){ playerId='p_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('kj_pid',playerId); }
+let myName=localStorage.getItem('kj_name')||'';
+
+let st=null;                       // latest server state
+let publicBase='';                 // public tunnel URL for invite links (falls back to location.origin)
+fetch('/config').then(r=>r.json()).then(c=>{ if(c&&c.publicUrl) publicBase=c.publicUrl; }).catch(()=>{});
+// Connect over WebSocket directly (skip the slow HTTP long-polling phase, which
+// adds seconds of latency per message for remote players through the tunnel).
+// Keep polling only as a fallback for networks that block WebSockets.
+const socket=io({ transports:['websocket','polling'], tryAllTransports:true });
+
+socket.on('connect',()=>{ socket.emit('hello',{playerId,name:myName}); });
+socket.on('ready',()=>{ st=null; showWelcome(); });
+socket.on('joined',({code})=>{ closeModal('welcome'); history.replaceState(null,'','?room='+code); });
+socket.on('state',(s)=>{ st=s; render(); });
+socket.on('error',({msg})=>toast(msg,true));
+
+/* ---------- welcome / lobby entry ---------- */
+function showWelcome(){
+  if(document.getElementById('m-welcome')) return;
+  const params=new URLSearchParams(location.search);
+  const preCode=(params.get('room')||'').toUpperCase();
+  const ov=modal('welcome',`
+    <h2>Klaverjassen Online</h2>
+    <p>Rotterdam rules, 4 players. Empty seats are played by bots, so you can start with any number of friends.</p>
+    <div class="field"><label>Your name</label><input id="nm" maxlength="16" placeholder="e.g. Sandor" value="${escapeHtml(myName)}"></div>
+    <button class="btn wide" id="createBtn">Create a table</button>
+    <div class="sep">or join one</div>
+    <div class="row2"><input id="jc" maxlength="4" placeholder="CODE" value="${preCode}"><button class="btn sec" id="joinBtn">Join</button></div>
+  `);
+  const nm=ov.querySelector('#nm');
+  const saveName=()=>{ myName=nm.value.trim()||'Player'; localStorage.setItem('kj_name',myName); socket.emit('hello',{playerId,name:myName}); };
+  ov.querySelector('#createBtn').onclick=()=>{ saveName(); socket.emit('create'); };
+  ov.querySelector('#joinBtn').onclick=()=>{ const c=ov.querySelector('#jc').value.trim().toUpperCase(); if(c.length<4)return toast('Enter a 4-letter code',true); saveName(); socket.emit('join',{code:c}); };
+  ov.querySelector('#jc').addEventListener('keydown',e=>{ if(e.key==='Enter')ov.querySelector('#joinBtn').click(); });
+  nm.focus();
+  if(preCode.length===4) setTimeout(()=>toast('Table code '+preCode+' ready — enter your name and Join'),300);
+}
+
+/* ---------- rendering ---------- */
+function seatPos(seat){ const my=(st.mySeat<0?0:st.mySeat); return (seat-my+4)%4; }
+
+function render(){
+  if(!st){ return; }
+  document.getElementById('roomPill').textContent='Table '+st.code;
+  const myTeam=(st.mySeat<0?0:st.mySeat)%2;
+  document.getElementById('weLbl').textContent='We ('+TEAM_LBL[myTeam]+')';
+  document.getElementById('theyLbl').textContent='They ('+TEAM_LBL[1-myTeam]+')';
+  const cum=st.cumulative||[0,0];
+  document.getElementById('scoreWe').textContent=cum[myTeam];
+  document.getElementById('scoreThey').textContent=cum[1-myTeam];
+  const dp=document.getElementById('dealPill');
+  if(st.deal){ dp.style.display=''; document.getElementById('dealNo').textContent=st.deal; } else dp.style.display='none';
+  const tsym=document.getElementById('trumpSym');
+  tsym.textContent=st.trump?SUIT_SYM[st.trump]:'–';
+  tsym.style.color=st.trump&&SUIT_RED[st.trump]?'#ff7b7b':'#eaf3ec';
+
+  renderSeats();
+  renderTrick();
+  renderHand();
+  renderLog();
+  renderCheat();
+  handleModals();
+}
+
+function renderSeats(){
+  for(let pos=0;pos<4;pos++) document.getElementById('sp-'+pos).innerHTML='';
+  const showBacks = st.phase!=='lobby';
+  for(const s of st.seats){
+    const pos=seatPos(s.seat);
+    const el=document.getElementById('sp-'+pos);
+    el.className='seat'+(st.turn===s.seat&&st.phase==='playing'?' turn':'')+(st.dealer===s.seat?' dealer':'')+((s.present&&!s.connected&&!s.isBot)?' off':'');
+    const meTag = s.seat===st.mySeat?' (you)':'';
+    const teamName = s.team===((st.mySeat<0?0:st.mySeat)%2)?'we':'they';
+    let inner='';
+    if(pos!==0 && showBacks){
+      const backs=Array.from({length:s.cardCount},()=>'<div class="cardback"></div>').join('');
+      const vert=(pos===1||pos===3)?' vert':'';
+      inner+=`<div class="backrow${vert}">${backs}</div>`;
+    }
+    const nm=`<div class="name">${escapeHtml(s.name)}${meTag}${s.isBot?' 🤖':''}</div>`;
+    const tag=`<div class="teamtag ${teamName}">${TEAM_LBL[s.team]}${s.present&&!s.connected&&!s.isBot?' · away':''}</div>`;
+    inner = (pos===2)? nm+tag+inner : (pos===0? nm+tag : inner+nm+tag);
+    el.innerHTML=inner;
+  }
+}
+
+function cardEl(card,cls){
+  const el=document.createElement('div');
+  el.className='card '+(SUIT_RED[card.suit]?'red':'')+(cls?' '+cls:'');
+  const sym=SUIT_SYM[card.suit];
+  el.innerHTML=`<span class="rk">${card.rank}${sym}</span><span class="big">${sym}</span><span class="rk b">${card.rank}${sym}</span>`;
+  return el;
+}
+function renderTrick(){
+  const t=document.getElementById('trick'); t.innerHTML='';
+  document.getElementById('slots').style.display=(st.phase==='playing')?'block':'none';
+  if(!st.trick) return;
+  for(const p of st.trick){
+    const mine=p.seat===st.mySeat;
+    t.appendChild(cardEl(p.card,'tcard pos-'+seatPos(p.seat)+(mine?' mine':'')));
+  }
+}
+function renderHand(){
+  const handEl=document.getElementById('hand'); handEl.innerHTML='';
+  const label=document.getElementById('handlabel');
+  const legal=new Set(st.legal||[]);
+  const myTurn = st.phase==='playing' && st.turn===st.mySeat && !st.resolving;
+  for(const card of (st.hand||[])){
+    const isLegal=legal.has(card.id);
+    const el=cardEl(card, myTurn?(isLegal?'legal':'illegal'):'');
+    if(myTurn&&isLegal) el.onclick=()=>socket.emit('play',{cardId:card.id});
+    handEl.appendChild(el);
+  }
+  label.textContent=statusLine();
+}
+function statusLine(){
+  if(!st) return '';
+  if(st.phase==='lobby') return 'Waiting in the lobby…';
+  if(st.phase==='choosing') return st.mySeat===st.chooser?'Choose a trump suit…':`Waiting for ${nmeat(st.chooser)} to choose trump…`;
+  if(st.phase==='playing'){
+    if(st.resolving) return 'Trick complete…';
+    if(st.turn===st.mySeat) return obligation();
+    return `${nmeat(st.turn)} to play…`;
+  }
+  return '';
+}
+function nmeat(seat){ const s=st.seats.find(x=>x.seat===seat); return s?s.name:''; }
+function obligation(){
+  if(!st.trick.length) return 'Your lead — play any card.';
+  const led=st.trick[0].card.suit, tr=st.trump;
+  const hand=st.hand||[];
+  const haveLed=hand.some(c=>c.suit===led);
+  if(led===tr) return haveLed?'Trump led — follow & overtrump if you can.':'Trump led — you hold none, play anything.';
+  if(haveLed) return 'Follow suit ('+SUIT_SYM[led]+').';
+  if(hand.some(c=>c.suit===tr)){
+    const trumped=st.trick.some(p=>p.card.suit===tr);
+    if(!trumped) return 'Void — you must trump in.';
+    return 'Void — you must trump, over- if you can (even over your partner!).';
+  }
+  return 'Void of suit & trump — discard anything.';
+}
+function renderLog(){
+  const l=document.getElementById('log'); l.innerHTML='';
+  for(const e of (st.log||[])){ const d=document.createElement('div'); d.className='entry'+(e.cls?' '+e.cls:''); d.innerHTML=e.html; l.appendChild(d); }
+  l.scrollTop=l.scrollHeight;
+}
+
+/* ---------- modals: lobby / trump / deal / match ---------- */
+let openOverlays={};
+function handleModals(){
+  // clear game modals not relevant
+  if(st.phase!=='choosing') closeModal('trump');
+  if(st.phase!=='scored'&&st.phase!=='matchover') closeModal('deal');
+
+  if(st.phase==='lobby') renderLobbyModal(); else closeModal('lobby');
+  if(st.phase==='choosing'&&st.needTrump) renderTrumpModal();
+  if(st.phase==='scored'||st.phase==='matchover') renderDealModal();
+}
+function renderLobbyModal(){
+  const ov=modal('lobby','',true);
+  const iAmHost = st.seats.some(s=>s.seat===st.mySeat&&s.isHost);
+  const seatCards=[0,1,2,3].map(seat=>{
+    const s=st.seats.find(x=>x.seat===seat);
+    const mine=seat===st.mySeat;
+    const taken=s.present;
+    const who = taken? escapeHtml(s.name)+(s.isHost?' 👑':'')+(mine?' (you)':'') : 'Open — click to sit';
+    return `<div class="lseat t${seat%2} ${mine?'mine':''} ${taken?'taken':''}" data-seat="${seat}">
+      <div class="pos">${['South','West','North','East'][seat]} · ${TEAM_LBL[seat%2]}</div>
+      <div class="who">${who}</div></div>`;
+  }).join('');
+  ov.querySelector('.modal').innerHTML=`
+    <h2>Table lobby</h2>
+    <p>Share this code (or the link) so friends can join. North &amp; South are partners; East &amp; West are partners.</p>
+    <div class="codebig">${st.code}</div>
+    <button class="btn sec" id="copyLink">📋 Copy invite link</button>
+    <div class="lobbyseats">${seatCards}</div>
+    <div class="diffrow"><span class="difflbl">Bot difficulty</span><div class="diffbtns">${
+      ['easy','normal','hard'].map(l=>`<button class="diffbtn ${st.botLevel===l?'on':''}" data-l="${l}" ${iAmHost?'':'disabled'}>${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
+    }</div></div>
+    <p style="margin:6px 0 12px">${iAmHost?'Empty seats become bots when you start.':'Waiting for the host to start…'}</p>
+    ${iAmHost?'<button class="btn wide" id="startBtn">Start match ▶</button>':''}
+  `;
+  ov.querySelectorAll('.lseat').forEach(el=>el.onclick=()=>{ const seat=+el.dataset.seat; if(seat!==st.mySeat) socket.emit('claimSeat',{seat}); });
+  ov.querySelectorAll('.diffbtn').forEach(b=>b.onclick=()=>{ if(iAmHost) socket.emit('setDifficulty',{level:b.dataset.l}); });
+  ov.querySelector('#copyLink').onclick=()=>{ const url=(publicBase||location.origin)+'/?room='+st.code; navigator.clipboard.writeText(url).then(()=>toast('Invite link copied!'),()=>toast(url)); };
+  const sb=ov.querySelector('#startBtn'); if(sb) sb.onclick=()=>socket.emit('start');
+}
+function renderTrumpModal(){
+  if(openOverlays['trump']) return;
+  document.getElementById('cheat').classList.remove('hidden'); document.getElementById('cheatBtn').classList.add('on');
+  const ov=modal('trump',`<h2>Choose trump</h2>
+    <p>You sit left of the dealer, so you name trump — your team must then score <b>more than</b> the opponents, or go <b>nat</b>. Check the cheat sheet (bottom-left).</p>
+    <div class="suitbtns">${SUITS.map(s=>`<button class="suitbtn ${SUIT_RED[s]?'red':'black'}" data-s="${s}">${SUIT_SYM[s]}</button>`).join('')}</div>`);
+  ov.querySelectorAll('.suitbtn').forEach(b=>b.onclick=()=>{ socket.emit('chooseTrump',{suit:b.dataset.s}); closeModal('trump'); });
+}
+function renderDealModal(){
+  if(openOverlays['deal']) return;
+  const r=st.lastResult; if(!r) return;
+  const done=st.phase==='matchover';
+  const myTeam=(st.mySeat<0?0:st.mySeat)%2;
+  const teamWord=t=>t===myTeam?'we':'they';
+  const line=(lbl,cls,val)=>`<div class="row"><span class="${cls}">${lbl}</span><span>${val}</span></div>`;
+  let matchHtml='';
+  if(done){
+    const [a,b]=r.cumulative; const weSc=r.cumulative[myTeam], theySc=r.cumulative[1-myTeam];
+    const res= weSc>theySc?'<span class="win">Your team wins! 🏆</span>':weSc<theySc?'<span class="lose">Your team loses.</span>':'A tie!';
+    matchHtml=`<p style="font-size:16px;font-weight:800">Final — We ${weSc} : They ${theySc}<br>${res}</p>`;
+  }
+  const ov=modal('deal',`
+    <h2>Deal ${r.deal} ${r.nat?'— NAT':'complete'}</h2>
+    <div class="summary">
+      ${line(`${TEAM_LBL[r.play]} (declared ${SUIT_SYM[r.trump]})`,teamWord(r.play),r.playPts+' pts')}
+      ${line(`${TEAM_LBL[r.opp]}`,teamWord(r.opp),r.oppPts+' pts')}
+      <div class="row" style="opacity:.7;font-size:12px"><span>roem this deal</span><span>${r.totalRoem}</span></div>
+      ${(r.pitPlay||r.pitOpp)?`<div class="row"><span class="win">PIT +100</span><span>${TEAM_LBL[r.pitPlay?r.play:r.opp]}</span></div>`:''}
+      <hr style="border-color:#ffffff22">
+      <div class="row big"><span class="${teamWord(myTeam)}">We total</span><span>${r.cumulative[myTeam]}</span></div>
+      <div class="row big"><span class="${teamWord(1-myTeam)}">They total</span><span>${r.cumulative[1-myTeam]}</span></div>
+    </div>
+    ${matchHtml}
+    ${done?'<button class="btn" id="againBtn">New match</button>':'<button class="btn" id="nextBtn">Next deal ▶</button><p style="margin-top:10px;font-size:11px;opacity:.6">auto-continues shortly…</p>'}
+  `);
+  const nx=ov.querySelector('#nextBtn'); if(nx) nx.onclick=()=>{ socket.emit('next'); closeModal('deal'); };
+  const ag=ov.querySelector('#againBtn'); if(ag) ag.onclick=()=>socket.emit('newMatch');
+}
+
+/* ---------- cheat sheet ---------- */
+function buildTiles(el,order,valMap,suit){
+  el.innerHTML='';
+  for(const r of order){ const v=valMap[r]; const t=document.createElement('div');
+    t.className='tile'+(suit&&SUIT_RED[suit]?' red':'')+(v===0?' zero':'');
+    t.innerHTML=`<span class="r">${r}${suit?SUIT_SYM[suit]:''}</span><span class="v">${v}</span>`; el.appendChild(t); }
+}
+function renderCheat(){
+  const tr=st?st.trump:null;
+  document.getElementById('cheatTrumpLbl').innerHTML=tr?('Trump '+SUIT_SYM[tr]):'Trump';
+  buildTiles(document.getElementById('cheatTrump'),CHEAT_TRUMP,TRUMP_VAL,tr);
+  buildTiles(document.getElementById('cheatPlain'),CHEAT_PLAIN,PLAIN_VAL,null);
+}
+document.getElementById('cheatBtn').onclick=()=>{ const c=document.getElementById('cheat'); const h=c.classList.toggle('hidden'); document.getElementById('cheatBtn').classList.toggle('on',!h); };
+document.getElementById('cheatClose').onclick=()=>{ document.getElementById('cheat').classList.add('hidden'); document.getElementById('cheatBtn').classList.remove('on'); };
+document.getElementById('leaveBtn').onclick=()=>{ if(confirm('Leave this table?')){ socket.emit('leave'); history.replaceState(null,'','/'); } };
+
+/* rules modal */
+document.getElementById('rulesbtn').onclick=()=>{
+  const ov=modal('rules',`<div style="max-width:560px"><h2>Rotterdam Klaverjassen</h2><div id="ruleText">
+    <h3>The Rotterdam obligations</h3>
+    <b>1.</b> Follow the led suit if you can.<br><b>2.</b> If you can't, you <b>must trump</b>.<br>
+    <b>3.</b> With a trump already down you <b>must overtrump</b> if able — <b>even over your own partner</b> (the signature Rotterdam rule).<br>
+    <b>4.</b> If you can't overtrump, you must still <b>undertrump</b> (play a lower trump). You may only discard when you hold no trump at all.
+    <h3>Card values</h3>
+    <table class="vt"><tr><td><b>Trump</b></td><td>J 20</td><td>9 14</td><td>A 11</td><td>10 10</td><td>K 4</td><td>Q 3</td><td>8/7 0</td></tr>
+    <tr><td><b>Plain</b></td><td>A 11</td><td>10 10</td><td>K 4</td><td>Q 3</td><td>J 2</td><td colspan="2">9/8/7 0</td></tr></table>
+    152 + 10 last trick = <b>162</b> per deal.
+    <h3>Roem</h3>run3 20 · run4 50 · <b>stuk</b> (trump K+Q) 20 · run incl. trump K-Q 40/70. To the team winning the trick.
+    <h3>Winning</h3>The declaring team must score <b>more than</b> the opponents (points + roem), else they go <b>nat</b> and the opponents take all 162 + all roem. All 8 tricks = <b>pit</b> (+100).
+    <h3>Match</h3>16 deals; highest total wins.
+    </div><br><button class="btn sec" id="closeRules">Close</button></div>`);
+  ov.querySelector('#closeRules').onclick=()=>closeModal('rules');
+};
+
+/* ---------- modal + toast utilities ---------- */
+function modal(key,inner,persistent){
+  if(openOverlays[key]) { if(inner) openOverlays[key].querySelector('.modal').innerHTML=inner; return openOverlays[key]; }
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='m-'+key;
+  ov.innerHTML=`<div class="modal">${inner}</div>`;
+  document.getElementById('table').appendChild(ov);
+  openOverlays[key]=ov; return ov;
+}
+function closeModal(key){ if(openOverlays[key]){ openOverlays[key].remove(); delete openOverlays[key]; } }
+let toastT=null;
+function toast(msg,err){ const t=document.getElementById('toast'); t.textContent=msg; t.className='show'+(err?' err':''); clearTimeout(toastT); toastT=setTimeout(()=>t.className='',err?2600:1600); }
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+renderCheat();
+</script>
+</body>
+</html>
