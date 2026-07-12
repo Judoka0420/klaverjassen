@@ -1,4 +1,5 @@
 name: Deploy web app to GitHub Pages
+# Pages enabled via Settings -> Source: GitHub Actions.
 
 # Publishes the peer-to-peer web app (app/www) as a static site, so anyone can
 # host/join from a PC or phone browser — no install, no server. Interoperates
