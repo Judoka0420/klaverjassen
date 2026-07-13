@@ -140,7 +140,7 @@
       <div class="score"><span class="we">We (You + North)</span><span class="pill we" id="scoreWe">0</span></div>
       <div class="score"><span class="they">They (West + East)</span><span class="pill they" id="scoreThey">0</span></div>
       <button id="cheatBtn" class="tbtn on">🃏 Cheat sheet</button>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--dim);font-weight:600">🤖<select id="diffSel" style="background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);border-radius:7px;padding:4px 8px;font-size:12.5px;font-weight:700;cursor:pointer"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--dim);font-weight:600">🤖<select id="diffSel" style="background:#0a3d27;color:var(--txt);border:1px solid var(--panelbd);border-radius:7px;padding:4px 8px;font-size:12.5px;font-weight:700;cursor:pointer"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option><option value="family">Family</option></select></label>
       <div id="trumpBadge"><span class="teamtag">TRUMP</span><span id="trumpSym">–</span><span id="trumpBy" class="teamtag"></span></div>
     </div>
     <div id="table">
@@ -402,7 +402,8 @@ function scoreDeal(){
 }
 
 /* ============================================================
-        BOT AI — difficulty levels: easy | normal | hard
+        BOT AI — difficulty levels: easy | normal | hard | family
+   (family = Perfect-Information Monte Carlo; strictly stronger than hard)
    ============================================================ */
 let botLevel = localStorage.getItem('kj_botlevel') || 'normal';
 const ALL_CARDS=[]; for(const s of SUITS) for(const r of RANKS) ALL_CARDS.push({suit:s,rank:r});
@@ -444,6 +445,7 @@ function chooseBotCard(seat){
   const legal=legalMoves(state.hands[seat],state.trick,tr);
   if(!legal.length) return null;
   if(botLevel==='easy') return legal[Math.floor(Math.random()*legal.length)];
+  if(botLevel==='family') return familyPlay(seat,state.hands[seat],state.trick,tr,legal,state.played||[],state.chooser);
   if(botLevel==='hard') return hardPlay(seat,tr,legal);
   return normalPlay(seat,tr,legal);
 }
@@ -486,6 +488,124 @@ function hardPlay(seat,tr,legal){
   }
   if(winners.length) return vLow(winners,tr);
   return dumpLowCard(legal,tr);
+}
+
+/* ---- family = Perfect-Information Monte Carlo (see engine.js for the full write-up) ----
+   Reconstruct the deal from state.played to learn opponents' remaining counts + voids,
+   then sample many possible worlds, play each candidate to the end greedily, and pick the
+   card with the best average deal-score. */
+const FAMILY_SAMPLES=60;
+function reconstructDealF(played,tr,chooser){
+  const playedBySeat=[[],[],[],[]], voids=[new Set(),new Set(),new Set(),new Set()];
+  const card=[0,0], roem=[0,0], won=[0,0];
+  let leader=chooser, completed=0, i=0;
+  while(i<played.length){
+    const group=played.slice(i,i+4), led=group[0].suit;
+    const seatCards=group.map((c,k)=>({seat:(leader+k)%4,card:c}));
+    for(let k=0;k<group.length;k++){
+      const s=(leader+k)%4, c=group[k];
+      playedBySeat[s].push(c);
+      if(k>0&&c.suit!==led){ voids[s].add(led); if(led!==tr&&c.suit!==tr) voids[s].add(tr); }
+    }
+    if(group.length===4){
+      const w=trickWinnerSeat(seatCards,tr), tm=teamOf(w);
+      card[tm]+=group.reduce((x,c)=>x+cardVal(c,tr),0);
+      roem[tm]+=computeRoem(group,tr).roem;
+      won[tm]++; completed++; leader=w; i+=4;
+    } else break;
+  }
+  return {playedBySeat,voids,card,roem,won,completed};
+}
+function dealUnseenF(unseen,others,need,voids){
+  const eligStatic=c=>others.filter(s=>!voids[s].has(c.suit)).length;
+  for(let attempt=0;attempt<40;attempt++){
+    const cap={},res={}; others.forEach(s=>{cap[s]=need[s];res[s]=[];});
+    const order=unseen.slice();
+    for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}
+    order.sort((a,b)=>eligStatic(a)-eligStatic(b));
+    let ok=true;
+    for(const c of order){
+      const elig=others.filter(s=>cap[s]>0&&!voids[s].has(c.suit));
+      if(!elig.length){ok=false;break;}
+      const s=elig[Math.floor(Math.random()*elig.length)]; res[s].push(c); cap[s]--;
+    }
+    if(ok) return res;
+  }
+  const cap={},res={}; others.forEach(s=>{cap[s]=need[s];res[s]=[];});
+  const order=unseen.slice();
+  for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}
+  for(const c of order){const s=others.find(x=>cap[x]>0); res[s].push(c); cap[s]--;}
+  return res;
+}
+function rolloutPickF(seat,trick,tr,legal){
+  if(legal.length===1) return legal[0];
+  if(trick.length===0){
+    const nonT=legal.filter(c=>c.suit!==tr);
+    const aces=nonT.filter(c=>c.rank==='A'); if(aces.length) return aces[0];
+    return nonT.length?vLow(nonT,tr):vLow(legal,tr);
+  }
+  const winSeat=trickWinnerSeat(trick,tr), partner=(seat+2)%4, last=trick.length===3;
+  const winners=legal.filter(c=>trickWinnerSeat(trick.concat([{seat,card:c}]),tr)===seat);
+  if(winSeat===partner){
+    const wc=trick.find(t=>t.seat===winSeat).card;
+    if(last||wc.suit===tr||wc.rank==='A') return vHigh(legal,tr);
+    if(winners.length) return vLow(winners,tr);
+    return dumpLowCard(legal,tr);
+  }
+  if(winners.length) return vLow(winners,tr);
+  return dumpLowCard(legal,tr);
+}
+function simulateToEndF(H,T,turn,tr,acc){
+  while(acc.trickNo<8){
+    while(T.length<4){
+      const s=turn, legal=legalMoves(H[s],T,tr), c=rolloutPickF(s,T,tr,legal);
+      const idx=H[s].findIndex(x=>x.suit===c.suit&&x.rank===c.rank);
+      H[s].splice(idx,1); T.push({seat:s,card:c}); turn=(s+1)%4;
+    }
+    const cards=T.map(t=>t.card), w=trickWinnerSeat(T,tr), tm=teamOf(w);
+    acc.card[tm]+=cards.reduce((x,c)=>x+cardVal(c,tr),0);
+    acc.roem[tm]+=computeRoem(cards,tr).roem;
+    acc.won[tm]++; acc.trickNo++;
+    if(acc.trickNo===8) acc.card[tm]+=10;
+    T.length=0; turn=w;
+  }
+}
+function awardDiffF(acc,play,myTeam){
+  const opp=1-play, pitPlay=acc.won[play]===8, pitOpp=acc.won[opp]===8;
+  const playPts=acc.card[play]+acc.roem[play]+(pitPlay?100:0);
+  const oppPts=acc.card[opp]+acc.roem[opp]+(pitOpp?100:0);
+  const totalRoem=acc.roem[0]+acc.roem[1], awarded=[0,0];
+  if(playPts>oppPts){awarded[play]=playPts;awarded[opp]=oppPts;}
+  else {awarded[opp]=162+totalRoem+(pitOpp?100:0);awarded[play]=0;}
+  return awarded[myTeam]-awarded[1-myTeam];
+}
+function familyPlay(seat,hand,trick,tr,legal,played,chooser){
+  if(legal.length===1) return legal[0];
+  const rec=reconstructDealF(played,tr,chooser);
+  const others=[0,1,2,3].filter(s=>s!==seat), need={};
+  others.forEach(s=>{need[s]=8-rec.playedBySeat[s].length;});
+  const unseen=unseenFor(seat);
+  const total=others.reduce((x,s)=>x+need[s],0);
+  if(total!==unseen.length) return hardPlay(seat,tr,legal);   // inconsistent — fall back
+  const myTeam=teamOf(seat), play=teamOf(chooser), scores=legal.map(()=>0);
+  for(let n=0;n<FAMILY_SAMPLES;n++){
+    const deal=dealUnseenF(unseen,others,need,rec.voids);
+    const world=[null,null,null,null]; world[seat]=hand; others.forEach(s=>{world[s]=deal[s];});
+    for(let ci=0;ci<legal.length;ci++){
+      const H=world.map(h=>h.slice()), T=trick.map(t=>({seat:t.seat,card:t.card}));
+      const acc={card:rec.card.slice(),roem:rec.roem.slice(),won:rec.won.slice(),trickNo:rec.completed};
+      const c=legal[ci], idx=H[seat].findIndex(x=>x.suit===c.suit&&x.rank===c.rank);
+      H[seat].splice(idx,1); T.push({seat,card:c});
+      simulateToEndF(H,T,(seat+1)%4,tr,acc);
+      scores[ci]+=awardDiffF(acc,play,myTeam);
+    }
+  }
+  let bi=0;
+  for(let i=1;i<legal.length;i++){
+    if(scores[i]>scores[bi]+1e-9) bi=i;
+    else if(Math.abs(scores[i]-scores[bi])<=1e-9 && cardVal(legal[i],tr)<cardVal(legal[bi],tr)) bi=i;
+  }
+  return legal[bi];
 }
 
 /* ============================================================

@@ -266,7 +266,7 @@ class GameRoom {
         if (this.phase === 'lobby' && this.hostId === playerId) this.startGame();
         break;
       case 'setDifficulty':
-        if (this.hostId === playerId && this.phase === 'lobby' && ['easy', 'normal', 'hard'].includes(data.level)) {
+        if (this.hostId === playerId && this.phase === 'lobby' && ['easy', 'normal', 'hard', 'family'].includes(data.level)) {
           this.botLevel = data.level; this.broadcast();
         }
         break;

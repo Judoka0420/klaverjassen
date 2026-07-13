@@ -101,11 +101,16 @@ function computeRoem(cards, trump) {
 }
 
 /* ============================================================
-   Bot AI — three difficulty levels: 'easy' | 'normal' | 'hard'
+   Bot AI — four difficulty levels: 'easy' | 'normal' | 'hard' | 'family'
    - easy   : plays a random legal card; naive trump pick. Beatable beginner.
    - normal : positional heuristic (lead aces, win cheap, schmear to a winning partner).
    - hard   : normal + card-counting (tracks played cards to know guaranteed
               winners / whether a card is safe, drives trumps, discards to void suits).
+   - family : Perfect-Information Monte Carlo search — samples many plausible deals
+              of the unseen cards (honouring each opponent's known remaining count and
+              revealed voids), plays every candidate out to the end of the deal with a
+              fast greedy policy, and picks the card with the best average deal score.
+              Strictly stronger than hard; think-time scales with sample count.
    ============================================================ */
 const ALL_CARDS = [];
 for (const s of SUITS) for (const r of RANKS) ALL_CARDS.push({ suit: s, rank: r });
@@ -120,15 +125,16 @@ function botChooseTrump(hand, level = 'normal') {
     for (const s of SUITS) { const n = hand.filter(c => c.suit === s).length; if (n > bc) { bc = n; best = s; } }
     return best;
   }
+  const strong = level === 'hard' || level === 'family';   // card-counting tiers share the sharper heuristic
   let best = SUITS[0], bs = -Infinity;
   for (const s of SUITS) {
     let sc = 0;
     for (const c of hand) sc += c.suit === s ? TRUMP_VAL[c.rank] + 6 : PLAIN_VAL[c.rank] * 0.3;
-    if (hand.some(c => c.suit === s && c.rank === 'J')) sc += level === 'hard' ? 22 : 15;
-    if (hand.some(c => c.suit === s && c.rank === '9')) sc += level === 'hard' ? 12 : 8;
+    if (hand.some(c => c.suit === s && c.rank === 'J')) sc += strong ? 22 : 15;
+    if (hand.some(c => c.suit === s && c.rank === '9')) sc += strong ? 12 : 8;
     const n = hand.filter(c => c.suit === s).length;
-    sc += level === 'hard' ? n * n * 1.5 : n * n;
-    if (level === 'hard') {                          // value guaranteed side-suit winners (aces)
+    sc += strong ? n * n * 1.5 : n * n;
+    if (strong) {                                    // value guaranteed side-suit winners (aces)
       sc += hand.filter(c => c.suit !== s && c.rank === 'A').length * 4;
       if (n < 3) sc -= 6;                            // avoid naming a short trump suit
     }
@@ -160,6 +166,7 @@ function chooseBotCard(seat, hand, trick, trump, opts = {}) {
   if (!legal.length) return null;                    // empty hand (stale call) — caller must guard
   const level = opts.level || 'normal';
   if (level === 'easy') return legal[Math.floor(Math.random() * legal.length)];
+  if (level === 'family') return familyPlay(seat, hand, trick, trump, legal, opts.played || [], opts.chooser, opts.samples);
   if (level === 'hard') return hardPlay(seat, hand, trick, trump, legal, opts.played || [], opts.chooser);
   return normalPlay(seat, trick, trump, legal);
 }
@@ -220,6 +227,169 @@ function hardPlay(seat, hand, trick, trump, legal, played, chooser) {
   }
   if (winners.length) return valLow(winners, trump); // opponent winning: take it as cheaply as possible
   return dumpLow(legal, trump);                      // can't win: discard lowest, keep trumps
+}
+
+/* ============================================================
+   Family = Perfect-Information Monte Carlo (PIMC).
+   Reconstruct the deal so far from the flat `played` history to learn each
+   opponent's remaining hand size, the suits they are known to be void in, and
+   the card/roem/trick totals already banked. Then, many times over, deal the
+   unseen cards into consistent "possible worlds", play every legal candidate
+   out to the end with a fast greedy policy, and keep the candidate whose
+   average final deal-score (from our team's view) is highest.
+   ============================================================ */
+const DEFAULT_SAMPLES = 60;
+
+// Replay `played` (in play order) trick-by-trick to recover hidden info.
+function reconstructDeal(played, trump, chooser) {
+  const playedBySeat = [[], [], [], []];
+  const voids = [new Set(), new Set(), new Set(), new Set()];
+  const card = [0, 0], roem = [0, 0], won = [0, 0];
+  let leader = chooser, completed = 0, i = 0;
+  while (i < played.length) {
+    const group = played.slice(i, i + 4);
+    const led = group[0].suit;
+    const seatCards = group.map((c, k) => ({ seat: (leader + k) % 4, card: c }));
+    for (let k = 0; k < group.length; k++) {
+      const s = (leader + k) % 4, c = group[k];
+      playedBySeat[s].push(c);
+      if (k > 0 && c.suit !== led) {                 // failed to follow the led suit -> void in it
+        voids[s].add(led);
+        if (led !== trump && c.suit !== trump) voids[s].add(trump);   // discarded, so void in trump too
+      }
+    }
+    if (group.length === 4) {                        // complete trick: bank it and find next leader
+      const w = trickWinnerSeat(seatCards, trump), tm = teamOf(w);
+      card[tm] += group.reduce((x, c) => x + cardVal(c, trump), 0);
+      roem[tm] += computeRoem(group, trump).roem;
+      won[tm]++; completed++;
+      leader = w; i += 4;
+    } else break;                                    // partial (current) trick — stop
+  }
+  return { playedBySeat, voids, card, roem, won, completed };
+}
+
+// Deal `unseen` among `others`, honouring per-seat counts (`need`) and `voids`.
+// Retries with reshuffles; if the void constraints prove unsatisfiable, relaxes them.
+function dealUnseen(unseen, others, need, voids) {
+  const eligStatic = c => others.filter(s => !voids[s].has(c.suit)).length;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const cap = {}, res = {};
+    others.forEach(s => { cap[s] = need[s]; res[s] = []; });
+    const order = unseen.slice();
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    order.sort((a, b) => eligStatic(a) - eligStatic(b));   // hardest-to-place cards first
+    let ok = true;
+    for (const c of order) {
+      const elig = others.filter(s => cap[s] > 0 && !voids[s].has(c.suit));
+      if (!elig.length) { ok = false; break; }
+      const s = elig[Math.floor(Math.random() * elig.length)];
+      res[s].push(c); cap[s]--;
+    }
+    if (ok) return res;
+  }
+  const cap = {}, res = {};                          // relaxed fallback: counts only
+  others.forEach(s => { cap[s] = need[s]; res[s] = []; });
+  const order = unseen.slice();
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  for (const c of order) { const s = others.find(x => cap[x] > 0); res[s].push(c); cap[s]--; }
+  return res;
+}
+
+// Fast greedy policy used inside a determinized playout (all four seats use it).
+function rolloutPick(seat, trick, trump, legal) {
+  if (legal.length === 1) return legal[0];
+  if (trick.length === 0) {
+    const nonT = legal.filter(c => c.suit !== trump);
+    const aces = nonT.filter(c => c.rank === 'A');
+    if (aces.length) return aces[0];
+    return nonT.length ? valLow(nonT, trump) : valLow(legal, trump);
+  }
+  const winSeat = trickWinnerSeat(trick, trump), partner = (seat + 2) % 4, last = trick.length === 3;
+  const winners = legal.filter(c => trickWinnerSeat(trick.concat([{ seat, card: c }]), trump) === seat);
+  if (winSeat === partner) {
+    const wc = trick.find(t => t.seat === winSeat).card;
+    if (last || wc.suit === trump || wc.rank === 'A') return valHigh(legal, trump);
+    if (winners.length) return valLow(winners, trump);
+    return dumpLow(legal, trump);
+  }
+  if (winners.length) return valLow(winners, trump);
+  return dumpLow(legal, trump);
+}
+
+// Play a determinized world to the end of the deal, accumulating card/roem/tricks into acc.
+function simulateToEnd(H, T, turn, trump, acc) {
+  while (acc.trickNo < 8) {
+    while (T.length < 4) {
+      const s = turn;
+      const legal = legalMoves(H[s], T, trump);
+      const c = rolloutPick(s, T, trump, legal);
+      const idx = H[s].findIndex(x => x.suit === c.suit && x.rank === c.rank);
+      H[s].splice(idx, 1);
+      T.push({ seat: s, card: c });
+      turn = (s + 1) % 4;
+    }
+    const cards = T.map(t => t.card);
+    const w = trickWinnerSeat(T, trump), tm = teamOf(w);
+    acc.card[tm] += cards.reduce((x, c) => x + cardVal(c, trump), 0);
+    acc.roem[tm] += computeRoem(cards, trump).roem;
+    acc.won[tm]++;
+    acc.trickNo++;
+    if (acc.trickNo === 8) acc.card[tm] += 10;       // last-trick bonus
+    T.length = 0;
+    turn = w;
+  }
+}
+
+// Final deal award differential (our team minus theirs), mirroring GameRoom.scoreDeal.
+function awardDiff(acc, play, myTeam) {
+  const opp = 1 - play;
+  const pitPlay = acc.won[play] === 8, pitOpp = acc.won[opp] === 8;
+  const playPts = acc.card[play] + acc.roem[play] + (pitPlay ? 100 : 0);
+  const oppPts = acc.card[opp] + acc.roem[opp] + (pitOpp ? 100 : 0);
+  const totalRoem = acc.roem[0] + acc.roem[1];
+  const awarded = [0, 0];
+  if (playPts > oppPts) { awarded[play] = playPts; awarded[opp] = oppPts; }
+  else { awarded[opp] = 162 + totalRoem + (pitOpp ? 100 : 0); awarded[play] = 0; }   // nat: opponents take all
+  return awarded[myTeam] - awarded[1 - myTeam];
+}
+
+function familyPlay(seat, hand, trick, trump, legal, played, chooser, samples) {
+  if (legal.length === 1) return legal[0];
+  const N = samples || DEFAULT_SAMPLES;
+  const rec = reconstructDeal(played, trump, chooser);
+  const others = [0, 1, 2, 3].filter(s => s !== seat);
+  const need = {};
+  others.forEach(s => { need[s] = 8 - rec.playedBySeat[s].length; });
+  const unseen = unseenCards(hand, played);
+  const total = others.reduce((x, s) => x + need[s], 0);
+  if (total !== unseen.length)                       // reconstruction inconsistent — fall back to hard
+    return hardPlay(seat, hand, trick, trump, legal, played, chooser);
+  const myTeam = teamOf(seat), play = teamOf(chooser);
+  const scores = legal.map(() => 0);
+  for (let n = 0; n < N; n++) {
+    const deal = dealUnseen(unseen, others, need, rec.voids);
+    const world = [null, null, null, null];
+    world[seat] = hand;
+    others.forEach(s => { world[s] = deal[s]; });
+    for (let ci = 0; ci < legal.length; ci++) {
+      const H = world.map(h => h.slice());
+      const T = trick.map(t => ({ seat: t.seat, card: t.card }));
+      const acc = { card: rec.card.slice(), roem: rec.roem.slice(), won: rec.won.slice(), trickNo: rec.completed };
+      const c = legal[ci];
+      const idx = H[seat].findIndex(x => x.suit === c.suit && x.rank === c.rank);
+      H[seat].splice(idx, 1);
+      T.push({ seat, card: c });
+      simulateToEnd(H, T, (seat + 1) % 4, trump, acc);
+      scores[ci] += awardDiff(acc, play, myTeam);
+    }
+  }
+  let bi = 0;
+  for (let i = 1; i < legal.length; i++) {           // best average; tie-break toward keeping high cards
+    if (scores[i] > scores[bi] + 1e-9) bi = i;
+    else if (Math.abs(scores[i] - scores[bi]) <= 1e-9 && cardVal(legal[i], trump) < cardVal(legal[bi], trump)) bi = i;
+  }
+  return legal[bi];
 }
 
 const API = {

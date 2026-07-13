@@ -355,7 +355,7 @@ function renderLobbyModal(){
     <button class="btn sec" id="copyLink">📋 Copy invite link</button>
     <div class="lobbyseats">${seatCards}</div>
     <div class="diffrow"><span class="difflbl">Bot difficulty</span><div class="diffbtns">${
-      ['easy','normal','hard'].map(l=>`<button class="diffbtn ${st.botLevel===l?'on':''}" data-l="${l}" ${iAmHost?'':'disabled'}>${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
+      ['easy','normal','hard','family'].map(l=>`<button class="diffbtn ${st.botLevel===l?'on':''}" data-l="${l}" ${iAmHost?'':'disabled'}>${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
     }</div></div>
     <p style="margin:6px 0 12px">${iAmHost?'Empty seats become bots when you start.':'Waiting for the host to start…'}</p>
     ${iAmHost?'<button class="btn wide" id="startBtn">Start match ▶</button>':''}

@@ -211,7 +211,7 @@ function showWelcome(){
     <p>Rotterdam rules · 4 players. Empty seats are played by bots.</p>
     <div class="field"><label>Your name</label><input id="nm" maxlength="16" placeholder="e.g. Sandor" value="${escapeHtml(myName)}"></div>
     <div class="diffrow"><span class="difflbl">Bot difficulty</span><div class="diffbtns" id="wDiff">${
-      ['easy','normal','hard'].map(l=>`<button class="diffbtn ${myDiff===l?'on':''}" data-l="${l}">${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
+      ['easy','normal','hard','family'].map(l=>`<button class="diffbtn ${myDiff===l?'on':''}" data-l="${l}">${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
     }</div></div>
     <button class="btn wide" id="soloBtn">🤖 Play solo — offline</button>
     <button class="btn wide" id="hostBtn">🌐 Host a game with friends</button>
@@ -373,7 +373,7 @@ function renderLobbyModal(){
     <button class="btn sec" id="copyLink">📋 Copy table code</button>
     <div class="lobbyseats">${seatCards}</div>
     <div class="diffrow"><span class="difflbl">Bot difficulty</span><div class="diffbtns">${
-      ['easy','normal','hard'].map(l=>`<button class="diffbtn ${st.botLevel===l?'on':''}" data-l="${l}" ${iAmHost?'':'disabled'}>${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
+      ['easy','normal','hard','family'].map(l=>`<button class="diffbtn ${st.botLevel===l?'on':''}" data-l="${l}" ${iAmHost?'':'disabled'}>${l[0].toUpperCase()+l.slice(1)}</button>`).join('')
     }</div></div>
     <p style="margin:6px 0 12px">${iAmHost?'Empty seats become bots when you start.':'Waiting for the host to start…'}</p>
     ${iAmHost?'<button class="btn wide" id="startBtn">Start match ▶</button>':''}
