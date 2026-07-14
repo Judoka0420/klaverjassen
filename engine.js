@@ -288,19 +288,36 @@ function dealUnseen(unseen, others, need, voids) {
     }
     if (ok) return res;
   }
-  const cap = {}, res = {};                          // relaxed fallback: counts only
+  // Relaxed fallback: still honour every void whenever a non-void seat has room,
+  // violating a void only when no valid seat remains. Keeps the sampled world as
+  // plausible as possible instead of discarding all the void info at once.
+  const cap = {}, res = {};
   others.forEach(s => { cap[s] = need[s]; res[s] = []; });
   const order = unseen.slice();
   for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  for (const c of order) { const s = others.find(x => cap[x] > 0); res[s].push(c); cap[s]--; }
+  order.sort((a, b) => eligStatic(a) - eligStatic(b));   // hardest-to-place cards first
+  for (const c of order) {
+    const roomy = others.filter(s => cap[s] > 0);
+    const respectful = roomy.filter(s => !voids[s].has(c.suit));
+    const pool = respectful.length ? respectful : roomy;
+    const s = pool[Math.floor(Math.random() * pool.length)];
+    res[s].push(c); cap[s]--;
+  }
   return res;
 }
 
-// Fast greedy policy used inside a determinized playout (all four seats use it).
-function rolloutPick(seat, trick, trump, legal) {
+// Greedy policy used inside a determinized playout. Because the world is fully
+// determined, `others` (every card still in the other three hands) lets each seat
+// play a realistic perfect-information line — cash a sure winner when leading and
+// schmear onto a provably-safe partner — instead of a naive lead-ace/low heuristic.
+// Sharper, more consistent playouts mean less strategy-fusion noise in the PIMC
+// average, so the search reads positions more accurately.
+function rolloutPick(seat, trick, trump, legal, others) {
   if (legal.length === 1) return legal[0];
   if (trick.length === 0) {
     const nonT = legal.filter(c => c.suit !== trump);
+    const sure = nonT.filter(c => unbeatable(c, trump, others));   // cash a guaranteed winner
+    if (sure.length) return valHigh(sure, trump);
     const aces = nonT.filter(c => c.rank === 'A');
     if (aces.length) return aces[0];
     return nonT.length ? valLow(nonT, trump) : valLow(legal, trump);
@@ -309,7 +326,7 @@ function rolloutPick(seat, trick, trump, legal) {
   const winners = legal.filter(c => trickWinnerSeat(trick.concat([{ seat, card: c }]), trump) === seat);
   if (winSeat === partner) {
     const wc = trick.find(t => t.seat === winSeat).card;
-    if (last || wc.suit === trump || wc.rank === 'A') return valHigh(legal, trump);
+    if (last || wc.suit === trump || wc.rank === 'A' || unbeatable(wc, trump, others)) return valHigh(legal, trump);
     if (winners.length) return valLow(winners, trump);
     return dumpLow(legal, trump);
   }
@@ -323,7 +340,9 @@ function simulateToEnd(H, T, turn, trump, acc) {
     while (T.length < 4) {
       const s = turn;
       const legal = legalMoves(H[s], T, trump);
-      const c = rolloutPick(s, T, trump, legal);
+      const others = [];                               // cards still out (perfect-info world)
+      for (let x = 0; x < 4; x++) if (x !== s) for (const c of H[x]) others.push(c);
+      const c = rolloutPick(s, T, trump, legal, others);
       const idx = H[s].findIndex(x => x.suit === c.suit && x.rank === c.rank);
       H[s].splice(idx, 1);
       T.push({ seat: s, card: c });

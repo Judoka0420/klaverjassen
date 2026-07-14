@@ -531,16 +531,30 @@ function dealUnseenF(unseen,others,need,voids){
     }
     if(ok) return res;
   }
+  // Relaxed fallback: honour each void whenever a non-void seat still has room,
+  // violating one only when forced — keeps the sampled world plausible instead of
+  // dropping all void info at once.
   const cap={},res={}; others.forEach(s=>{cap[s]=need[s];res[s]=[];});
   const order=unseen.slice();
   for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}
-  for(const c of order){const s=others.find(x=>cap[x]>0); res[s].push(c); cap[s]--;}
+  order.sort((a,b)=>eligStatic(a)-eligStatic(b));
+  for(const c of order){
+    const roomy=others.filter(s=>cap[s]>0);
+    const respectful=roomy.filter(s=>!voids[s].has(c.suit));
+    const pool=respectful.length?respectful:roomy;
+    const s=pool[Math.floor(Math.random()*pool.length)];
+    res[s].push(c); cap[s]--;
+  }
   return res;
 }
-function rolloutPickF(seat,trick,tr,legal){
+// `others` = every card still in the other three hands (perfect-info determinized
+// world), so the playout cashes sure winners and schmears onto a provably-safe
+// partner instead of a naive lead-ace/low line — sharper, less-noisy PIMC rollouts.
+function rolloutPickF(seat,trick,tr,legal,others){
   if(legal.length===1) return legal[0];
   if(trick.length===0){
     const nonT=legal.filter(c=>c.suit!==tr);
+    const sure=nonT.filter(c=>unbeatableCard(c,tr,others)); if(sure.length) return vHigh(sure,tr);
     const aces=nonT.filter(c=>c.rank==='A'); if(aces.length) return aces[0];
     return nonT.length?vLow(nonT,tr):vLow(legal,tr);
   }
@@ -548,7 +562,7 @@ function rolloutPickF(seat,trick,tr,legal){
   const winners=legal.filter(c=>trickWinnerSeat(trick.concat([{seat,card:c}]),tr)===seat);
   if(winSeat===partner){
     const wc=trick.find(t=>t.seat===winSeat).card;
-    if(last||wc.suit===tr||wc.rank==='A') return vHigh(legal,tr);
+    if(last||wc.suit===tr||wc.rank==='A'||unbeatableCard(wc,tr,others)) return vHigh(legal,tr);
     if(winners.length) return vLow(winners,tr);
     return dumpLowCard(legal,tr);
   }
@@ -558,7 +572,9 @@ function rolloutPickF(seat,trick,tr,legal){
 function simulateToEndF(H,T,turn,tr,acc){
   while(acc.trickNo<8){
     while(T.length<4){
-      const s=turn, legal=legalMoves(H[s],T,tr), c=rolloutPickF(s,T,tr,legal);
+      const s=turn, legal=legalMoves(H[s],T,tr);
+      const others=[]; for(let x=0;x<4;x++) if(x!==s) for(const c of H[x]) others.push(c);
+      const c=rolloutPickF(s,T,tr,legal,others);
       const idx=H[s].findIndex(x=>x.suit===c.suit&&x.rank===c.rank);
       H[s].splice(idx,1); T.push({seat:s,card:c}); turn=(s+1)%4;
     }
@@ -723,11 +739,41 @@ function askTrump(){
   ov.querySelectorAll('.suitbtn').forEach(b=>b.addEventListener('click',()=>{ ov.remove(); setTrump(b.dataset.s); }));
 }
 
+/* ---------- solo stats (persisted per browser) ---------- */
+const STATS_KEY='kj_stats';
+function blankStats(){ return {games:0,wins:0,losses:0,ties:0,pf:0,pa:0,streak:0,bestStreak:0,byLevel:{}}; }
+function loadStats(){ try{ return Object.assign(blankStats(),JSON.parse(localStorage.getItem(STATS_KEY))||{}); }catch(e){ return blankStats(); } }
+function recordSoloResult(){
+  const s=loadStats(), [w,t]=state.cumulative;
+  s.games++; s.pf+=w; s.pa+=t;
+  if(w>t){ s.wins++;   s.streak=s.streak>0?s.streak+1:1; }
+  else if(w<t){ s.losses++; s.streak=s.streak<0?s.streak-1:-1; }
+  else { s.ties++; s.streak=0; }
+  s.bestStreak=Math.max(s.bestStreak,s.streak);
+  const bl=s.byLevel[botLevel]||{games:0,wins:0}; bl.games++; if(w>t) bl.wins++; s.byLevel[botLevel]=bl;
+  try{ localStorage.setItem(STATS_KEY,JSON.stringify(s)); }catch(e){}
+  return s;
+}
+function statsHtml(s){
+  if(!s||!s.games) return '';
+  const pct=Math.round(100*s.wins/s.games);
+  const streakTxt=s.streak>0?`${s.streak}-win streak 🔥`:s.streak<0?`${-s.streak}-loss streak`:'—';
+  const bl=s.byLevel[botLevel];
+  const blTxt=bl&&bl.games?` · vs ${botLevel}: ${bl.wins}/${bl.games}`:'';
+  return `<div class="summary" style="margin-top:10px">
+    <div class="row big"><span>Your record vs bots</span><span>${s.wins}–${s.losses}${s.ties?'–'+s.ties:''} (${pct}%)</span></div>
+    <div class="row" style="opacity:.7;font-size:12px"><span>${s.games} matches · ${streakTxt} · best ${s.bestStreak}W${blTxt}</span><span></span></div>
+    <div class="row" style="font-size:12px"><span><a href="#" id="resetStats" style="color:#9fd0ff">reset stats</a></span><span></span></div>
+  </div>`;
+}
+
 /* ---------- deal summary modal ---------- */
 function showDealSummary(r){
   const {play,opp,playPts,oppPts,nat,awarded,totalRoem,pitPlay,pitOpp}=r;
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='ovDeal';
   const done=state.deal>=16;
+  let stats=null;
+  if(done && !state.statsRecorded){ state.statsRecorded=true; stats=recordSoloResult(); }
   const line=(label,cls,val)=>`<div class="row"><span class="${cls}">${label}</span><span>${val}</span></div>`;
   ov.innerHTML=`<div class="modal">
     <h2>Deal ${state.deal} ${nat?'— NAT':'complete'}</h2>
@@ -741,16 +787,18 @@ function showDealSummary(r){
       <div class="row big"><span class="we">We total</span><span>${state.cumulative[0]}</span></div>
       <div class="row big"><span class="they">They total</span><span>${state.cumulative[1]}</span></div>
     </div>
-    ${done?matchResultHtml():''}
+    ${done?matchResultHtml(stats):''}
     <button class="btn" id="nextBtn">${done?'New match':'Next deal ▶'}</button>
   </div>`;
   document.getElementById('table').appendChild(ov);
   document.getElementById('nextBtn').addEventListener('click',()=>{ ov.remove(); done?newMatch():newDeal(); });
+  const rs=ov.querySelector('#resetStats');
+  if(rs) rs.addEventListener('click',(e)=>{ e.preventDefault(); if(confirm('Clear your solo stats?')){ localStorage.removeItem(STATS_KEY); const box=rs.closest('.summary'); if(box) box.remove(); } });
 }
-function matchResultHtml(){
+function matchResultHtml(stats){
   const [w,t]=state.cumulative;
   const res = w>t?'<span class="win">You win the match! 🏆</span>':w<t?'<span class="lose">They win the match.</span>':'It\'s a tie!';
-  return `<p style="font-size:16px;font-weight:800">Final: We ${w} — They ${t}<br>${res}</p>`;
+  return `<p style="font-size:16px;font-weight:800">Final: We ${w} — They ${t}<br>${res}</p>`+statsHtml(stats);
 }
 
 /* ---------- log & toast ---------- */
