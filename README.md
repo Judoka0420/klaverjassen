@@ -27,6 +27,9 @@ Artifacts. Same game, native. (iOS: the Capacitor project supports it, but build
   - `app/www/` — the site published to GitHub Pages (index.html + net.js + generated `lib/`).
 - `klaverjassen.html` — the original standalone **offline single-player** file (double-click to play).
 - `public/` + `server.js` — the legacy self-hosted server version (see below).
+- `test/sim.js` — engine self-play tests: legality, the 162-point invariant, and
+  bot-strength ordering (easy < normal < hard < family). Run with `npm test`;
+  gated in CI by `.github/workflows/test.yml`.
 
 ## Rules
 Rotterdam Klaverjassen: follow suit; if void you **must trump**; with a trump already down you
@@ -52,4 +55,11 @@ It prints an ephemeral `https://<random>.trycloudflare.com` link; your machine m
 while friends are connected. `cloudflared.exe` is the tunnel client (not committed to git).
 
 Env vars: `PORT` (default 8787); `KJ_BOT_MS` / `KJ_TRUMP_MS` / `KJ_TRICK_MS` / `KJ_DEAL_MS`
-(pacing, ms); `KJ_GRACE_MS` (reconnection grace, default 60000).
+(pacing, ms); `KJ_GRACE_MS` (reconnection grace, default 60000); `KJ_MAX_ROOMS`
+(global room cap, default 300) and `KJ_MAX_CREATES` (tables one connection may
+create, default 40) — backstops against room-creation spam.
+
+Reconnection is authenticated: the authority (server, or the host's device in the
+P2P app) issues each seated player a per-seat token, delivered only in that
+player's own private state. Reclaiming a seat requires presenting it, so knowing
+someone's player id is not enough to take their seat.

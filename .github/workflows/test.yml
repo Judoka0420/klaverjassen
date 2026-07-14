@@ -1,0 +1,36 @@
+name: Engine tests
+
+# Gates the shared rules engine: runs pure-engine self-play and asserts
+# legality, the 162-point invariant, and bot-strength ordering. No install
+# needed — engine.js has zero dependencies.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'engine.js'
+      - 'game-room.js'
+      - 'test/**'
+      - '.github/workflows/test.yml'
+  pull_request:
+    paths:
+      - 'engine.js'
+      - 'game-room.js'
+      - 'test/**'
+      - '.github/workflows/test.yml'
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run engine simulation tests
+        run: node test/sim.js

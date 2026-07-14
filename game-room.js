@@ -24,6 +24,13 @@ const sym = s => SYM[s];
 const DEFAULT_TIMINGS = { botThink: 850, trumpThink: 1000, trickLinger: 2400, dealAuto: 10000 };
 const DEFAULT_MATCH_DEALS = 16;
 
+// Per-seat reconnection secret. A client proves it owns a seat by presenting the
+// token the room issued to it (delivered only in that player's own private view),
+// so a third party who merely learns someone's playerId can't seize their seat.
+function makeToken() {
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 class GameRoom {
   constructor(code, opts = {}) {
     this.code = code;
@@ -37,10 +44,15 @@ class GameRoom {
     this.log = [];
     this.timers = new Set();
     this.advanced = false;
-    this.botLevel = opts.botLevel || 'normal';     // easy | normal | hard
+    this.botLevel = opts.botLevel || 'normal';     // easy | normal | hard | family
     this.spectators = new Map();                   // playerId -> { name }
+    this.tokens = new Map();                        // playerId -> seat reconnection token
     this.g = null;                                 // game state
   }
+
+  /* --- seat auth --- */
+  tokenFor(playerId) { return this.tokens.get(playerId) || null; }
+  verifyToken(playerId, token) { const t = this.tokens.get(playerId); return !!t && t === token; }
 
   /* --- membership --- */
   openSeat() { return this.seats.findIndex(s => s === null); }
@@ -50,6 +62,7 @@ class GameRoom {
     const seat = this.openSeat();
     if (seat < 0) return -1;
     this.seats[seat] = { playerId, name, isBot: false, connected: true };
+    if (!this.tokens.has(playerId)) this.tokens.set(playerId, makeToken());
     if (!this.hostId) this.hostId = playerId;
     return seat;
   }
@@ -75,6 +88,7 @@ class GameRoom {
     if (seat < 0) return;
     if (this.phase === 'lobby') {
       this.seats[seat] = null;
+      this.tokens.delete(playerId);                // seat freed pre-game; invalidate its token
       if (this.hostId === playerId) {
         const nh = this.seats.find(s => s && !s.isBot);
         this.hostId = nh ? nh.playerId : null;
@@ -316,6 +330,7 @@ class GameRoom {
       canStart: this.phase === 'lobby',
       botLevel: this.botLevel,
     };
+    if (mySeat >= 0 && this.seats[mySeat]) base.token = this.tokens.get(this.seats[mySeat].playerId);
     if (!g) return base;
     const mine = (mySeat >= 0 && g.hands) ? g.hands[mySeat].map(c => ({ suit: c.suit, rank: c.rank, id: E.cardId(c) })) : [];
     let legal = [];

@@ -185,6 +185,7 @@ const TEAM_LBL=['North/South','East/West'];
 /* identity */
 let playerId=localStorage.getItem('kj_pid');
 if(!playerId){ playerId='p_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('kj_pid',playerId); }
+let seatToken=localStorage.getItem('kj_token')||null;   // proves seat ownership on reconnect
 let myName=localStorage.getItem('kj_name')||'';
 
 let st=null;                       // latest game state
@@ -195,7 +196,7 @@ let myDiff=localStorage.getItem('kj_diff')||'normal';
 function bindNet(n){
   net=n;
   n.on('joined',({code})=>{ closeModal('welcome'); });
-  n.on('state',(s)=>{ st=s; render(); });
+  n.on('state',(s)=>{ st=s; if(s&&s.token){ seatToken=s.token; localStorage.setItem('kj_token',seatToken); } render(); });
   n.on('error',({msg})=>toast(msg,true));
   n.on('ready',()=>{ teardownNet(); st=null; showWelcome(); });
 }
@@ -227,7 +228,7 @@ function showWelcome(){
   });
   ov.querySelector('#soloBtn').onclick=()=>{ saveName(); teardownNet(); bindNet(KJNet.createSolo({playerId,name:myName,botLevel:myDiff})); };
   ov.querySelector('#hostBtn').onclick=()=>{ saveName(); teardownNet(); toast('Creating your table…'); bindNet(KJNet.createHost({playerId,name:myName,botLevel:myDiff})); };
-  ov.querySelector('#joinBtn').onclick=()=>{ const c=ov.querySelector('#jc').value.trim().toUpperCase(); if(c.length<4)return toast('Enter a 4-letter code',true); saveName(); teardownNet(); toast('Connecting to '+c+'…'); bindNet(KJNet.createClient({playerId,name:myName,code:c})); };
+  ov.querySelector('#joinBtn').onclick=()=>{ const c=ov.querySelector('#jc').value.trim().toUpperCase(); if(c.length<4)return toast('Enter a 4-letter code',true); saveName(); teardownNet(); toast('Connecting to '+c+'…'); bindNet(KJNet.createClient({playerId,name:myName,code:c,token:seatToken})); };
   ov.querySelector('#jc').addEventListener('keydown',e=>{ if(e.key==='Enter')ov.querySelector('#joinBtn').click(); });
   nm.focus();
   if(preCode.length===4) setTimeout(()=>toast('Code '+preCode+' ready — enter your name and Join'),300);

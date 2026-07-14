@@ -24,6 +24,8 @@ const D = {
   dealAuto:    N('KJ_DEAL_MS', 10000),
 };
 const ROOM_GRACE = N('KJ_GRACE_MS', 60000);   // keep an all-disconnected room alive this long (reconnection)
+const MAX_ROOMS = N('KJ_MAX_ROOMS', 300);     // global cap so create-spam can't grow memory without bound
+const MAX_CREATES_PER_CONN = N('KJ_MAX_CREATES', 40);   // per-socket create budget
 
 const PUBLIC_URL = (process.env.KJ_PUBLIC_URL || '').replace(/\/+$/, '');  // public tunnel URL for invite links
 
@@ -67,13 +69,19 @@ const playerRoom = new Map();     // playerId -> room code
 function roomOf(pid) { const c = playerRoom.get(pid); return c ? rooms.get(c) : null; }
 
 io.on('connection', (socket) => {
-  socket.on('hello', ({ playerId, name }) => {
+  socket.on('hello', ({ playerId, name, token }) => {
     if (!playerId) return;
+    const room = roomOf(playerId);
+    // Verify BEFORE binding any maps, so an unverified claim on a seated playerId
+    // can't even redirect that player's message routing to the impostor.
+    if (room && room.seatOf(playerId) >= 0 && !room.verifyToken(playerId, token)) {
+      socket.emit('error', { msg: 'Could not verify your seat — rejoin with the table code.' });
+      socket.emit('ready');
+      return;
+    }
     playerSock.set(playerId, socket.id);
     sockPlayer.set(socket.id, playerId);
     socket.data.name = (name || 'Player').toString().slice(0, 16);
-    // reconnect to existing room?
-    const room = roomOf(playerId);
     if (room) {
       const seat = room.seatOf(playerId);
       if (seat >= 0) room.setConnected(playerId, true);
@@ -87,6 +95,9 @@ io.on('connection', (socket) => {
 
   socket.on('create', () => {
     const pid = sockPlayer.get(socket.id); if (!pid) return;
+    if (rooms.size >= MAX_ROOMS) return socket.emit('error', { msg: 'Server is at capacity — try again shortly.' });
+    socket.data.creates = (socket.data.creates || 0) + 1;
+    if (socket.data.creates > MAX_CREATES_PER_CONN) return socket.emit('error', { msg: 'Too many tables created on this connection.' });
     leaveCurrent(pid);
     const code = makeCode();
     const room = makeRoom(code);
@@ -99,7 +110,8 @@ io.on('connection', (socket) => {
 
   socket.on('join', ({ code }) => {
     const pid = sockPlayer.get(socket.id); if (!pid) return;
-    code = (code || '').toString().toUpperCase().trim();
+    code = (code || '').toString().toUpperCase().trim().slice(0, 8);
+    if (!code) return socket.emit('error', { msg: 'Enter a table code' });
     const room = rooms.get(code);
     if (!room) return socket.emit('error', { msg: 'No table with code ' + code });
     leaveCurrent(pid);

@@ -179,6 +179,7 @@ const TEAM_LBL=['North/South','East/West'];
 let playerId=localStorage.getItem('kj_pid');
 if(!playerId){ playerId='p_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('kj_pid',playerId); }
 let myName=localStorage.getItem('kj_name')||'';
+let seatToken=localStorage.getItem('kj_token')||null;   // proves seat ownership on reconnect
 
 let st=null;                       // latest server state
 let publicBase='';                 // public tunnel URL for invite links (falls back to location.origin)
@@ -188,10 +189,10 @@ fetch('/config').then(r=>r.json()).then(c=>{ if(c&&c.publicUrl) publicBase=c.pub
 // Keep polling only as a fallback for networks that block WebSockets.
 const socket=io({ transports:['websocket','polling'], tryAllTransports:true });
 
-socket.on('connect',()=>{ socket.emit('hello',{playerId,name:myName}); });
+socket.on('connect',()=>{ socket.emit('hello',{playerId,name:myName,token:seatToken}); });
 socket.on('ready',()=>{ st=null; showWelcome(); });
 socket.on('joined',({code})=>{ closeModal('welcome'); history.replaceState(null,'','?room='+code); });
-socket.on('state',(s)=>{ st=s; render(); });
+socket.on('state',(s)=>{ st=s; if(s&&s.token){ seatToken=s.token; localStorage.setItem('kj_token',seatToken); } render(); });
 socket.on('error',({msg})=>toast(msg,true));
 
 /* ---------- welcome / lobby entry ---------- */
@@ -208,7 +209,7 @@ function showWelcome(){
     <div class="row2"><input id="jc" maxlength="4" placeholder="CODE" value="${preCode}"><button class="btn sec" id="joinBtn">Join</button></div>
   `);
   const nm=ov.querySelector('#nm');
-  const saveName=()=>{ myName=nm.value.trim()||'Player'; localStorage.setItem('kj_name',myName); socket.emit('hello',{playerId,name:myName}); };
+  const saveName=()=>{ myName=nm.value.trim()||'Player'; localStorage.setItem('kj_name',myName); socket.emit('hello',{playerId,name:myName,token:seatToken}); };
   ov.querySelector('#createBtn').onclick=()=>{ saveName(); socket.emit('create'); };
   ov.querySelector('#joinBtn').onclick=()=>{ const c=ov.querySelector('#jc').value.trim().toUpperCase(); if(c.length<4)return toast('Enter a 4-letter code',true); saveName(); socket.emit('join',{code:c}); };
   ov.querySelector('#jc').addEventListener('keydown',e=>{ if(e.key==='Enter')ov.querySelector('#joinBtn').click(); });

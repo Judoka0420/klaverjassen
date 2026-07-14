@@ -119,8 +119,16 @@ function createHost(opts) {
     conn.on('data', (msg) => {
       if (!msg || !msg.event) return;
       if (msg.event === 'hello') {
-        pid = (msg.data && msg.data.playerId) || conn.peer;
+        const inPid = (msg.data && msg.data.playerId) || conn.peer;
+        const token = msg.data && msg.data.token;
         const nm = ((msg.data && msg.data.name) || 'Player').toString().slice(0, 16);
+        // Reconnecting onto an existing seat requires the token that seat was issued.
+        if (room.seatOf(inPid) >= 0 && !room.verifyToken(inPid, token)) {
+          try { conn.send({ event: 'error', data: { msg: 'Could not verify your seat — rejoin with the code.' } }); } catch (e) {}
+          try { conn.close(); } catch (e) {}
+          return;
+        }
+        pid = inPid;
         remotes.set(pid, conn);
         if (room.seatOf(pid) >= 0) room.setConnected(pid, true);                       // reconnect
         else if (room.phase === 'lobby' && room.openSeat() >= 0) room.addHuman(pid, nm);
@@ -183,7 +191,7 @@ function createClient(opts) {
   peer = new Peer(PEER_OPTS);
   peer.on('open', () => {
     conn = peer.connect(peerIdFor(code), { reliable: true });
-    conn.on('open', () => { opened = true; conn.send({ event: 'hello', data: { playerId: opts.playerId, name: opts.name } }); });
+    conn.on('open', () => { opened = true; conn.send({ event: 'hello', data: { playerId: opts.playerId, name: opts.name, token: opts.token } }); });
     conn.on('data', (msg) => { if (msg && msg.event) net._fire(msg.event, msg.data); });
     conn.on('close', () => { if (!closed) net._fire('error', { msg: 'Lost connection to the host — the game may have ended.' }); });
     conn.on('error', () => {});
