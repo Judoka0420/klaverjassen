@@ -50,6 +50,21 @@
   .pos-0{left:50%;top:50%;transform:translate(-50%,calc(-50% + 58px))}.pos-2{left:50%;top:50%;transform:translate(-50%,calc(-50% - 58px))}
   .pos-1{left:50%;top:50%;transform:translate(calc(-50% - 68px),-50%)}.pos-3{left:50%;top:50%;transform:translate(calc(-50% + 68px),-50%)}
   .tcard.mine{box-shadow:0 0 0 2px var(--gold),0 3px 10px #0008}
+  /* last-trick recap (bottom-right) — mini mirror of the trick, same viewer orientation */
+  #lasttrick{position:absolute;right:12px;bottom:12px;width:124px;height:108px;z-index:35;
+     background:#04180ee0;border:1px solid var(--panelbd);border-radius:10px;box-shadow:0 4px 14px #0006}
+  #lasttrick.empty{display:none}
+  #lasttrick .ltlbl{position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:.5px;
+     color:var(--dim);background:#04180e;padding:0 6px;white-space:nowrap;text-transform:uppercase}
+  .ltcard{position:absolute;width:30px;height:42px;border-radius:4px;background:var(--card);color:var(--black);
+     border:1px solid #0003;box-shadow:0 1px 3px #0005;display:flex;align-items:center;justify-content:center;
+     font-weight:800;font-size:13px;user-select:none}
+  .ltcard.red{color:var(--red)}
+  .ltcard.ltwin{box-shadow:0 0 0 2px var(--gold),0 1px 3px #0007}  /* winning card ring (gold, not green) */
+  .lt-0{left:50%;bottom:3px;transform:translateX(-50%)}
+  .lt-2{left:50%;top:11px;transform:translateX(-50%)}
+  .lt-1{left:3px;top:calc(50% + 3px);transform:translateY(-50%)}
+  .lt-3{right:3px;top:calc(50% + 3px);transform:translateY(-50%)}
   .card{width:58px;height:82px;border-radius:7px;background:var(--card);color:var(--black);border:1px solid #0003;box-shadow:0 2px 5px #0005;position:relative;user-select:none;display:flex;align-items:center;justify-content:center;font-weight:800}
   .card .rk{position:absolute;top:3px;left:5px;font-size:15px;line-height:1}
   .card .rk.b{top:auto;left:auto;bottom:3px;right:5px;transform:rotate(180deg)}
@@ -147,6 +162,7 @@
       <div class="seat" id="sp-3"></div>
       <div id="slots"><div class="tslot pos-0"></div><div class="tslot pos-1"></div><div class="tslot pos-2"></div><div class="tslot pos-3"></div></div>
       <div id="trick"></div>
+      <div id="lasttrick" class="empty"></div>
       <div id="cheat">
         <div class="cheat-hd">Card cheat sheet<span class="x" id="cheatClose">✕</span></div>
         <div class="cheat-row"><span class="lbl tr" id="cheatTrumpLbl">Trump</span><div class="tiles" id="cheatTrump"></div></div>
@@ -189,14 +205,35 @@ let seatToken=localStorage.getItem('kj_token')||null;   // proves seat ownership
 let myName=localStorage.getItem('kj_name')||'';
 
 let st=null;                       // latest game state
+let lastTrick=null;                // {cards:[{seat,card}], winner} snapshot for bottom-right recap
 let net=null;                      // active transport (solo / host / client)
+
+// winner seat of a completed 4-card trick (rank strength from CHEAT_* orders; index 0 = strongest)
+function trickWinnerSeat(trick,trump){
+  const led=trick[0].card.suit; let bi=0,bs=-2;
+  trick.forEach((t,i)=>{
+    const c=t.card;
+    const sc = c.suit===trump ? 100-CHEAT_TRUMP.indexOf(c.rank)
+             : c.suit===led   ? 10-CHEAT_PLAIN.indexOf(c.rank)
+             : -1;
+    if(sc>bs){bs=sc;bi=i;}
+  });
+  return trick[bi].seat;
+}
 let myDiff=localStorage.getItem('kj_diff')||'normal';
 
 // Wire a freshly-created transport to the UI. Same event names the old socket used.
 function bindNet(n){
   net=n;
   n.on('joined',({code})=>{ closeModal('welcome'); });
-  n.on('state',(s)=>{ st=s; if(s&&s.token){ seatToken=s.token; localStorage.setItem('kj_token',seatToken); } render(); });
+  n.on('state',(s)=>{
+    if(s){
+      if(s.trick&&s.trick.length===4)               // full trick just before it clears → snapshot
+        lastTrick={cards:s.trick.map(p=>({seat:p.seat,card:p.card})), winner:trickWinnerSeat(s.trick,s.trump)};
+      else if(s.phase==='choosing'||s.phase==='lobby') lastTrick=null;   // reset each new deal
+    }
+    st=s; if(s&&s.token){ seatToken=s.token; localStorage.setItem('kj_token',seatToken); } render();
+  });
   n.on('error',({msg})=>toast(msg,true));
   n.on('ready',()=>{ teardownNet(); st=null; showWelcome(); });
 }
@@ -297,6 +334,19 @@ function renderTrick(){
   for(const p of st.trick){
     const mine=p.seat===st.mySeat;
     t.appendChild(cardEl(p.card,'tcard pos-'+seatPos(p.seat)+(mine?' mine':'')));
+  }
+  renderLastTrick();
+}
+function renderLastTrick(){
+  const el=document.getElementById('lasttrick'); el.innerHTML='';
+  if(!lastTrick||!lastTrick.cards.length){ el.classList.add('empty'); return; }
+  el.classList.remove('empty');
+  const lbl=document.createElement('div'); lbl.className='ltlbl'; lbl.textContent='Last trick'; el.appendChild(lbl);
+  for(const p of lastTrick.cards){                 // same viewer-relative orientation as the middle
+    const c=document.createElement('div');
+    c.className='ltcard lt-'+seatPos(p.seat)+(SUIT_RED[p.card.suit]?' red':'')+(p.seat===lastTrick.winner?' ltwin':'');
+    c.textContent=p.card.rank+SUIT_SYM[p.card.suit];
+    el.appendChild(c);
   }
 }
 function renderHand(){
