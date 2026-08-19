@@ -7,6 +7,10 @@ apply plugin: 'com.android.application'
 // signed with the SAME key and carries a monotonic version.
 def ksPath = System.getenv("ANDROID_KEYSTORE_FILE")
 def hasReleaseKeystore = ksPath != null && !ksPath.isEmpty() && file(ksPath).exists()
+// Precompute into locals: `versionCode (expr).toInteger()` would be mis-parsed by Groovy as
+// versionCode(expr) followed by .toInteger() on the return value.
+def appVersionCode = (System.getenv("VERSION_CODE") ?: "1").toInteger()
+def appVersionName = System.getenv("VERSION_NAME") ?: "1.0"
 
 android {
     namespace "hu.shareline.klaverjassen"
@@ -15,8 +19,8 @@ android {
         applicationId "hu.shareline.klaverjassen"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode (System.getenv("VERSION_CODE") ?: "1").toInteger()
-        versionName System.getenv("VERSION_NAME") ?: "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
