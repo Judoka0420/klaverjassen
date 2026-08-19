@@ -49,6 +49,21 @@
   .tc-2{left:50%;top:0;transform:translateX(-50%)}
   .tc-1{left:0;top:50%;transform:translateY(-50%)}
   .tc-3{right:0;top:50%;transform:translateY(-50%)}
+  /* last-trick recap (bottom-right) — mini mirror of the trick, same seat orientation */
+  #lasttrick{position:absolute;right:12px;bottom:12px;width:124px;height:108px;z-index:15;
+     background:#04180ee0;border:1px solid var(--panelbd);border-radius:10px;box-shadow:0 4px 14px #0006}
+  #lasttrick.empty{display:none}
+  #lasttrick .ltlbl{position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:.5px;
+     color:var(--dim);background:#04180e;padding:0 6px;white-space:nowrap;text-transform:uppercase}
+  .ltcard{position:absolute;width:30px;height:42px;border-radius:4px;background:var(--card);color:var(--black);
+     border:1px solid #0003;box-shadow:0 1px 3px #0005;display:flex;align-items:center;justify-content:center;
+     font-weight:800;font-size:13px;user-select:none}
+  .ltcard.red{color:var(--red)}
+  .ltcard.ltwin{box-shadow:0 0 0 2px var(--gold),0 1px 3px #0007}  /* winning card ring (gold, not green) */
+  .lt-0{left:50%;bottom:3px;transform:translateX(-50%)}
+  .lt-2{left:50%;top:11px;transform:translateX(-50%)}
+  .lt-1{left:3px;top:calc(50% + 3px);transform:translateY(-50%)}
+  .lt-3{right:3px;top:calc(50% + 3px);transform:translateY(-50%)}
   /* generic card */
   .card{width:58px;height:82px;border-radius:7px;background:var(--card);color:var(--black);
      border:1px solid #0003;box-shadow:0 2px 5px #0005;position:relative;user-select:none;
@@ -149,6 +164,7 @@
       <div class="seat" id="seat-1"><div class="backrow vert" id="backs-1"></div><div class="name">West</div><div class="teamtag they">They</div></div>
       <div class="seat" id="seat-3"><div class="backrow vert" id="backs-3"></div><div class="name">East</div><div class="teamtag they">They</div></div>
       <div id="trick"></div>
+      <div id="lasttrick" class="empty"></div>
       <div id="cheat">
         <div class="cheat-hd">Card cheat sheet<span class="x" id="cheatClose">✕</span></div>
         <div class="cheat-row"><span class="lbl tr" id="cheatTrumpLbl">Trump</span><div class="tiles" id="cheatTrump"></div></div>
@@ -292,7 +308,7 @@ function newDeal(){
     dealer,chooser,hands,trump:null,
     trick:[],leader:chooser,turn:chooser,trickNo:0,
     dealCard:[0,0],dealRoem:[0,0],tricksWon:[0,0],played:[],
-    phase:'choosing', lastWinner:null
+    phase:'choosing', lastWinner:null, lastTrick:null, lastTrickWinner:-1
   });
   render();
   log('deal',`— Deal ${state.deal} — ${SEAT_NAMES[dealer]} deals. ${SEAT_NAMES[chooser]} (${TEAM_NAME[teamOf(chooser)]}) chooses trump.`);
@@ -350,6 +366,8 @@ function playCard(seat,card){
 function resolveTrick(){
   const trick=state.trick, cards=trick.map(t=>t.card), tr=state.trump;
   const winner=trickWinnerSeat(trick,tr);
+  state.lastTrick=trick.map(t=>({seat:t.seat,card:t.card}));   // snapshot for bottom-right recap
+  state.lastTrickWinner=winner;
   const tm=teamOf(winner);
   const pts=cards.reduce((s,c)=>s+cardVal(c,tr),0);
   const {roem,labels}=computeRoem(cards,tr);
@@ -627,6 +645,12 @@ function familyPlay(seat,hand,trick,tr,legal,played,chooser){
 /* ============================================================
                         RENDERING
    ============================================================ */
+function miniCardEl(card,seat,win){
+  const el=document.createElement('div');
+  el.className='ltcard lt-'+seat+(SUIT_RED[card.suit]?' red':'')+(win?' ltwin':'');
+  el.textContent=card.rank+SUIT_SYM[card.suit];
+  return el;
+}
 function cardEl(card,trump,cls){
   const el=document.createElement('div');
   el.className='card '+(SUIT_RED[card.suit]?'red':'')+(cls?' '+cls:'');
@@ -657,6 +681,13 @@ function render(){
   for(const t of state.trick){
     const c=cardEl(t.card,state.trump,'tcard tc-'+t.seat); tEl.appendChild(c);
   }
+  // last-trick recap (bottom-right): same seat orientation as the middle
+  const ltEl=document.getElementById('lasttrick'); ltEl.innerHTML='';
+  if(state.lastTrick&&state.lastTrick.length){
+    ltEl.classList.remove('empty');
+    const lbl=document.createElement('div'); lbl.className='ltlbl'; lbl.textContent='Last trick'; ltEl.appendChild(lbl);
+    for(const t of state.lastTrick) ltEl.appendChild(miniCardEl(t.card,t.seat,t.seat===state.lastTrickWinner));
+  } else { ltEl.classList.add('empty'); }
   if(state.turn===0&&state.phase==='playing') renderHand(); else renderHand(true);
   renderCheat();
 }
