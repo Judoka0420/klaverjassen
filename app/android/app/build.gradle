@@ -1,5 +1,13 @@
 apply plugin: 'com.android.application'
 
+// --- Release signing + versioning, driven by CI env vars (see .github/workflows/android.yml) ---
+// Locally (env vars absent) the release build falls back to debug signing so `assembleDebug`
+// and IDE builds keep working with no keystore. In CI the four ANDROID_KEY* vars are set from
+// repo secrets and VERSION_CODE/VERSION_NAME are computed per build, so every published APK is
+// signed with the SAME key and carries a monotonic version.
+def ksPath = System.getenv("ANDROID_KEYSTORE_FILE")
+def hasReleaseKeystore = ksPath != null && !ksPath.isEmpty() && file(ksPath).exists()
+
 android {
     namespace "hu.shareline.klaverjassen"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +15,8 @@ android {
         applicationId "hu.shareline.klaverjassen"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode (System.getenv("VERSION_CODE") ?: "1").toInteger()
+        versionName System.getenv("VERSION_NAME") ?: "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +24,23 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                storeFile file(ksPath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Sign with the stable release key when CI provides it; otherwise fall back to the
+            // debug keystore so local release builds still install (but are NOT auto-update-safe).
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

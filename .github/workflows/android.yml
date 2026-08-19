@@ -1,11 +1,17 @@
 name: Build Android APK
 
-# Builds an installable debug APK in the cloud (no local Android SDK / Mac needed).
-# Download it from the run's "Artifacts" section and sideload onto any Android phone
-# (enable "Install unknown apps" for your browser/file manager first).
+# Builds a SIGNED release APK and publishes it as a GitHub Release so the app's
+# self-updater can pull it. Two stable, auth-free URLs come out of every run:
+#   https://github.com/Judoka0420/klaverjassen/releases/latest/download/version.json
+#   https://github.com/Judoka0420/klaverjassen/releases/latest/download/klaverjassen.apk
 #
-# Assumes this repository's root is the "klaverjassen" folder, so the Capacitor
-# project lives at ./app and the shared rules engine at ./engine.js.
+# Signing key comes from repo Secrets (never stored in this public repo):
+#   ANDROID_KEYSTORE_B64      base64 of the .jks keystore  (see keystore.yml to generate)
+#   ANDROID_KEYSTORE_PASSWORD store password
+#   ANDROID_KEY_ALIAS         key alias
+#   ANDROID_KEY_PASSWORD      key password
+# Without the keystore secret the build still runs but falls back to debug signing,
+# which is NOT auto-update-safe (each build would have a different signature).
 
 on:
   push:
@@ -17,12 +23,26 @@ on:
       - '.github/workflows/android.yml'
   workflow_dispatch: {}
 
+permissions:
+  contents: write        # needed to create the Release
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # full history so the commit count = versionCode
+
+      - name: Compute version
+        id: ver
+        run: |
+          CODE=$(git rev-list --count HEAD)
+          NAME="1.0.${CODE}"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Version $NAME (code $CODE)"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -51,15 +71,58 @@ jobs:
           npm run sync-assets
           npx cap sync android
 
-      - name: Build debug APK
+      - name: Decode signing keystore
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+            echo "Keystore decoded."
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "::warning::No ANDROID_KEYSTORE_B64 secret set — building with DEBUG signing (not auto-update-safe)."
+          fi
+
+      - name: Build signed release APK
         working-directory: app/android
+        env:
+          VERSION_CODE: ${{ steps.ver.outputs.code }}
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
+          ANDROID_KEYSTORE_FILE: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Stage release assets
+        run: |
+          mkdir -p out
+          cp app/android/app/build/outputs/apk/release/app-release.apk out/klaverjassen.apk
+          cat > out/version.json <<EOF
+          {
+            "versionCode": ${{ steps.ver.outputs.code }},
+            "versionName": "${{ steps.ver.outputs.name }}",
+            "notes": $(git log -1 --pretty=%s | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.stringify(s.trim())))")
+          }
+          EOF
+          echo "--- version.json ---"; cat out/version.json
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: klaverjassen-debug-apk
-          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: klaverjassen-release-apk
+          path: out/klaverjassen.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.name }}
+          name: Klaverjassen ${{ steps.ver.outputs.name }}
+          files: |
+            out/klaverjassen.apk
+            out/version.json
